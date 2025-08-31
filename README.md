@@ -35,9 +35,8 @@ Build a FAISS vector index from multiple documents for efficient retrieval.
 #### 5. `rag_answer(question, index_dir, k, temperature)`
 Answer questions using retrieval-augmented generation over indexed documents.
 
-#### 6. `web_research(query, num_results, focus)`
-Search for quantum computing research using Perplexity AI.
-- `focus`: 'academic' for research papers, 'general' for all sources
+#### 6. `web_research(query, num_results)`
+Search for quantum computing research using Perplexity AI with academic focus.
 
 ## Setup
 

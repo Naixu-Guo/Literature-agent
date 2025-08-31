@@ -48,8 +48,6 @@ def summarize_source(source: str, temperature: Optional[float] = None) -> str:
     is_url = source.startswith(('http://', 'https://'))
     
     if is_url:
-        parsed_url = urlparse(source)
-        
         # Handle PDF URLs
         if source.lower().endswith('.pdf') or 'pdf' in source.lower():
             try:
@@ -227,12 +225,11 @@ def rag_answer(question: str, index_dir: Optional[str] = None, k: int = 5,
 
 
 @toolset.add()
-def web_research(query: str, num_results: int = 5, focus: str = "academic") -> list:
+def web_research(query: str, num_results: int = 5) -> list:
     """
     Perform web search using Perplexity AI for quantum computing literature.
     :param query: search query for quantum computing topics
     :param num_results: number of results (not directly used with Perplexity)
-    :param focus: search focus - 'academic' for research papers, 'general' for all sources
     :return: list of formatted search results with citations
     """
     import requests
