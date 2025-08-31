@@ -16,17 +16,28 @@ An AI-powered literature review agent built with LangChain and OpenAI, specializ
 
 ### API Endpoints
 
-#### 1. `summarize_file(path, temperature)`
-Summarize a local PDF or text file with key findings, methods, and limitations.
+#### 1. `summarize_source(source, temperature)`
+Summarize content from local files OR URLs (PDFs, text files, web pages).
+- Supports: Local PDFs, text files, web URLs, online PDF URLs
+- Returns: Comprehensive summary with key findings
 
-#### 2. `build_vector_index(paths)`
+#### 2. `summarize_file(path, temperature)` 
+Legacy endpoint for local files (backward compatibility).
+
+#### 3. `summarize_multiple_sources(sources, temperature)`
+Summarize multiple sources at once and get both individual and combined summaries.
+- Input: List of file paths and/or URLs
+- Returns: Individual summaries + synthesized overview
+
+#### 4. `build_vector_index(paths)`
 Build a FAISS vector index from multiple documents for efficient retrieval.
 
-#### 3. `rag_answer(question, index_dir, k, temperature)`
+#### 5. `rag_answer(question, index_dir, k, temperature)`
 Answer questions using retrieval-augmented generation over indexed documents.
 
-#### 4. `web_research(query, num_results)`
-Search the web for quantum computing research and return formatted results.
+#### 6. `web_research(query, num_results, focus)`
+Search for quantum computing research using Perplexity AI.
+- `focus`: 'academic' for research papers, 'general' for all sources
 
 ## Setup
 
@@ -59,9 +70,23 @@ The API server will start at `http://localhost:8000`
 
 ## Usage Examples
 
-### 1. Summarize a PDF
+### 1. Summarize from URL or Local File
 ```python
-result = summarize_file("/path/to/paper.pdf")
+# Summarize a web page
+result = summarize_source("https://arxiv.org/abs/2404.14809")
+
+# Summarize an online PDF
+result = summarize_source("https://example.com/paper.pdf")
+
+# Summarize a local file
+result = summarize_source("/path/to/paper.pdf")
+
+# Summarize multiple sources at once
+results = summarize_multiple_sources([
+    "/local/paper.pdf",
+    "https://arxiv.org/abs/2404.14809",
+    "https://quantum-computing.ibm.com/article"
+])
 ```
 
 ### 2. Build Vector Index

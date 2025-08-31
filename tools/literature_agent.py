@@ -32,23 +32,63 @@ def _split_docs(docs):
 
 
 @toolset.add()
-def summarize_file(path: str, temperature: Optional[float] = None) -> str:
+def summarize_source(source: str, temperature: Optional[float] = None) -> str:
     """
-    Summarize a local file (PDF or text). Returns a concise, accurate summary.
-    :param path: absolute path to a local file (.pdf or .txt)
+    Summarize content from a local file or URL (PDF, text, or web page).
+    :param source: absolute path to a local file (.pdf or .txt) or URL to a web page/PDF
     :param temperature: optional LLM temperature override
     :return: summary string
     """
-    if not os.path.isfile(path):
-        raise FileNotFoundError(f"File not found: {path}")
-
-    lower = path.lower()
-    if lower.endswith(".pdf"):
-        loader = PyPDFLoader(path)
+    import tempfile
+    import requests
+    from langchain_community.document_loaders import WebBaseLoader
+    from urllib.parse import urlparse
+    
+    # Check if source is a URL
+    is_url = source.startswith(('http://', 'https://'))
+    
+    if is_url:
+        parsed_url = urlparse(source)
+        
+        # Handle PDF URLs
+        if source.lower().endswith('.pdf') or 'pdf' in source.lower():
+            try:
+                # Download PDF to temporary file
+                response = requests.get(source, timeout=30)
+                response.raise_for_status()
+                
+                with tempfile.NamedTemporaryFile(mode='wb', suffix='.pdf', delete=False) as tmp_file:
+                    tmp_file.write(response.content)
+                    tmp_path = tmp_file.name
+                
+                loader = PyPDFLoader(tmp_path)
+                docs = loader.load()
+                
+                # Clean up temp file
+                os.unlink(tmp_path)
+                
+            except Exception as e:
+                return f"Error downloading PDF from URL: {str(e)}"
+        else:
+            # Handle regular web pages
+            try:
+                loader = WebBaseLoader(source)
+                docs = loader.load()
+            except Exception as e:
+                return f"Error loading web page: {str(e)}"
     else:
-        loader = TextLoader(path, encoding="utf-8")
+        # Handle local files
+        if not os.path.isfile(source):
+            raise FileNotFoundError(f"File not found: {source}")
 
-    docs = loader.load()
+        lower = source.lower()
+        if lower.endswith(".pdf"):
+            loader = PyPDFLoader(source)
+        else:
+            loader = TextLoader(source, encoding="utf-8")
+
+        docs = loader.load()
+    
     chunks = _split_docs(docs)
 
     prompt = ChatPromptTemplate.from_messages([
@@ -66,6 +106,65 @@ def summarize_file(path: str, temperature: Optional[float] = None) -> str:
 
     joiner = "\n\n"
     return joiner.join(summaries)
+
+
+@toolset.add()
+def summarize_file(path: str, temperature: Optional[float] = None) -> str:
+    """
+    Legacy function: Summarize a local file (PDF or text).
+    For URL support, use summarize_source instead.
+    :param path: absolute path to a local file (.pdf or .txt)
+    :param temperature: optional LLM temperature override
+    :return: summary string
+    """
+    return summarize_source(path, temperature)
+
+
+@toolset.add()
+def summarize_multiple_sources(sources: list, temperature: Optional[float] = None) -> dict:
+    """
+    Summarize multiple sources (files and/or URLs) and return individual and combined summaries.
+    :param sources: list of file paths or URLs
+    :param temperature: optional LLM temperature override
+    :return: dictionary with individual summaries and a combined summary
+    """
+    summaries = {}
+    all_summaries = []
+    
+    for source in sources:
+        try:
+            summary = summarize_source(source, temperature)
+            # Extract just the filename or domain for the key
+            if source.startswith(('http://', 'https://')):
+                from urllib.parse import urlparse
+                key = urlparse(source).netloc + urlparse(source).path[-30:]
+            else:
+                key = os.path.basename(source)
+            
+            summaries[key] = summary
+            all_summaries.append(f"**Source: {key}**\n{summary}")
+        except Exception as e:
+            summaries[source] = f"Error: {str(e)}"
+    
+    # Create a combined summary
+    if all_summaries:
+        combined_prompt = ChatPromptTemplate.from_messages([
+            ("system", "You are a research assistant. Create a unified summary from multiple sources, highlighting key themes and findings."),
+            ("human", "Synthesize these summaries into a coherent overview:\n\n{content}")
+        ])
+        
+        llm = _get_llm(temperature)
+        chain = combined_prompt | llm | StrOutputParser()
+        combined = chain.invoke({"content": "\n\n".join(all_summaries)})
+    else:
+        combined = "No sources successfully summarized"
+    
+    return {
+        "individual_summaries": summaries,
+        "combined_summary": combined,
+        "total_sources": len(sources),
+        "successful": len([s for s in summaries.values() if not s.startswith("Error:")])
+    }
 
 
 @toolset.add()
