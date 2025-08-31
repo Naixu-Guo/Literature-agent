@@ -42,7 +42,8 @@ Search for quantum computing research using Perplexity AI with academic focus.
 
 ### Prerequisites
 - Python 3.12+
-- OpenAI API key
+- OpenAI API key with available credits
+- Perplexity API key (optional, for web search)
 
 ### Installation
 
@@ -105,6 +106,13 @@ answer = rag_answer("What are the main quantum algorithms discussed?")
 ```python
 results = web_research("quantum error correction recent advances", num_results=5)
 ```
+
+## Important Notes
+
+### API Quotas
+- **OpenAI**: Ensure you have sufficient credits. Check your usage at https://platform.openai.com/account/billing
+- **Perplexity**: Free tier has rate limits. Consider upgrading for production use.
+- If you encounter quota errors, the system will provide helpful error messages.
 
 ## Architecture
 

@@ -18,7 +18,18 @@ from tools.toolset import toolset
 def _get_llm(temperature: Optional[float] = None) -> ChatOpenAI:
     temp = temperature if temperature is not None else float(os.getenv("LLM_TEMPERATURE", "0.2"))
     model = os.getenv("OPENAI_MODEL", "gpt-4-turbo-preview")
-    return ChatOpenAI(model=model, temperature=temp)
+    
+    # Check if API key is valid
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key or api_key.startswith("sk-proj-"):
+        # If using project key, try with gpt-3.5-turbo as fallback
+        try:
+            return ChatOpenAI(model=model, temperature=temp, api_key=api_key)
+        except:
+            # Fallback to cheaper model if quota exceeded
+            return ChatOpenAI(model="gpt-3.5-turbo", temperature=temp, api_key=api_key)
+    
+    return ChatOpenAI(model=model, temperature=temp, api_key=api_key)
 
 
 def _embedder() -> OpenAIEmbeddings:
@@ -95,12 +106,18 @@ def summarize_source(source: str, temperature: Optional[float] = None) -> str:
         ("human", "Summarize the following content for a literature review. Provide bullet points with citations if present.\n{content}")
     ])
 
-    llm = _get_llm(temperature)
-    chain = prompt | llm | StrOutputParser()
+    try:
+        llm = _get_llm(temperature)
+        chain = prompt | llm | StrOutputParser()
 
-    summaries = []
-    for chunk in chunks:
-        summaries.append(chain.invoke({"content": chunk.page_content}))
+        summaries = []
+        for chunk in chunks:
+            summaries.append(chain.invoke({"content": chunk.page_content}))
+    except Exception as e:
+        if "quota" in str(e).lower() or "429" in str(e):
+            return f"OpenAI API quota exceeded. Please check your billing at https://platform.openai.com/account/billing or use a different API key."
+        else:
+            raise e
 
     joiner = "\n\n"
     return joiner.join(summaries)
