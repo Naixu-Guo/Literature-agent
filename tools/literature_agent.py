@@ -97,69 +97,69 @@ def summarize_source(sources: Union[str, List[str]], title: Optional[str] = None
 
 
 @toolset.add()
-def query_documents(query: str, mode: str = "answer", num_results: int = 5) -> str:
+def query_documents(query: str, num_results: int = 5) -> str:
     """
-    Query documents with two modes: search for excerpts or get AI-generated answers.
+    Query documents and get the best answer combining AI analysis with direct quotes.
+    Automatically provides comprehensive AI-generated response enhanced with key excerpts.
     
     :param query: search query or question
-    :param mode: "search" for document excerpts, "answer" for AI-generated response (default: "answer")
     :param num_results: number of results/sources to use (default: 5)
-    :return: search results or answer with sources
+    :return: comprehensive answer with AI analysis and direct quotes
     """
     try:
-        if mode not in ["search", "answer"]:
-            return f"Invalid mode '{mode}'. Use 'search' or 'answer'."
+        # Get search results for direct quotes
+        search_result = _agent.search(query, num_results=num_results)
+        excerpts = search_result.get("results", []) if "error" not in search_result else []
         
-        if mode == "search":
-            # Search mode: return document excerpts
-            result = _agent.search(query, num_results=num_results)
-            
-            if "error" in result:
-                return f"Error: {result['error']}"
-            
-            matches = result.get("results", [])
-            
-            if not matches:
-                return "No matching documents found."
-            
-            # Format search results
-            output = f"Found {len(matches)} relevant documents:\n\n"
-            for i, match in enumerate(matches, 1):
-                output += f"{i}. {match}\n\n"
-            
-            return output
+        # Get AI-generated answer
+        rag_result = _agent.ask_question(query, num_sources=num_results)
         
-        else:
-            # Answer mode: use RAG to generate answer
-            result = _agent.ask_question(query, num_sources=num_results)
-            
-            if "error" in result:
-                return f"Error: {result['error']}"
-            
-            answer = result.get("answer", "No answer available")
-            sources = result.get("sources", [])
-            
-            # Format response with sources
-            response = f"{answer}\n"
-            if sources:
-                response += "\n\nSources:\n"
-                for i, source in enumerate(sources, 1):
-                    response += f"{i}. {source}\n"
-            
-            return response
+        if "error" in rag_result:
+            return f"Error: {rag_result['error']}"
+        
+        ai_answer = rag_result.get("answer", "No answer available")
+        sources = rag_result.get("sources", [])
+        
+        # Build comprehensive response
+        response = f"{ai_answer}\n"
+        
+        # Add key excerpts if available
+        if excerpts:
+            response += f"\n**Key Excerpts:**\n"
+            for i, excerpt in enumerate(excerpts[:3], 1):  # Top 3 most relevant
+                # Extract content from the dictionary result
+                if isinstance(excerpt, dict):
+                    content = excerpt.get("content", str(excerpt))
+                    doc_title = excerpt.get("document_title", "Unknown")
+                    clean_excerpt = content.strip() if isinstance(content, str) else str(content)
+                else:
+                    clean_excerpt = str(excerpt).strip()
+                    doc_title = "Unknown"
+                
+                if len(clean_excerpt) > 250:
+                    clean_excerpt = clean_excerpt[:250] + "..."
+                response += f"{i}. \"{clean_excerpt}\" _(from {doc_title})_\n\n"
+        
+        # Add sources
+        if sources:
+            response += "**Sources:**\n"
+            for i, source in enumerate(sources, 1):
+                response += f"{i}. {source}\n"
+        
+        return response
         
     except Exception as e:
         return f"Error: {str(e)}"
 
 
 @toolset.add()
-def web_research(query: str, num_results: int = 5) -> list:
+def web_research(query: str, num_results: int = 5) -> str:
     """
-    Search and load web documents related to a query using MCP backend.
+    Search and load web documents related to a query, returning a comprehensive summary.
     
     :param query: search query
     :param num_results: maximum number of results to load (default: 5)
-    :return: list of summaries from loaded documents
+    :return: formatted results with summaries and metadata
     """
     try:
         import requests
@@ -173,11 +173,17 @@ def web_research(query: str, num_results: int = 5) -> list:
         search_url = f"https://scholar.google.com/scholar?q={quote(query)}&hl=en"
         headers = {'User-Agent': user_agent}
         
-        response = requests.get(search_url, headers=headers, timeout=10)
+        try:
+            response = requests.get(search_url, headers=headers, timeout=10)
+            response.raise_for_status()
+        except Exception as e:
+            return f"Error accessing Google Scholar: {str(e)}"
+        
         soup = BeautifulSoup(response.text, 'html.parser')
         
         results = []
         loaded_count = 0
+        failed_loads = []
         
         # Find result divs
         for result_div in soup.find_all('div', {'class': 'gs_ri'}):
@@ -210,53 +216,52 @@ def web_research(query: str, num_results: int = 5) -> list:
             if load_result.get("success"):
                 doc_id = load_result["doc_id"]
                 
-                # Generate summary
+                # Try to generate summary (may fail if API key expired)
                 summary_result = _agent.summarize(doc_id, max_length=300)
                 
-                if not summary_result.get("error"):
-                    results.append({
-                        "title": title,
-                        "url": url,
-                        "snippet": snippet,
-                        "summary": summary_result.get("summary", "No summary available"),
-                        "doc_id": doc_id
-                    })
-                    loaded_count += 1
-        
-        # If no Scholar results, try regular web search
-        if not results:
-            search_url = f"https://www.google.com/search?q={quote(query + ' filetype:pdf OR research paper')}"
-            response = requests.get(search_url, headers=headers, timeout=10)
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            for link in soup.find_all('a', href=True):
-                if loaded_count >= num_results:
-                    break
+                summary = "Summary unavailable (API issue)" if summary_result.get("error") else summary_result.get("summary", "No summary generated")
                 
-                href = link['href']
-                if '/url?q=' in href and '.pdf' in href:
-                    url = href.split('/url?q=')[1].split('&')[0]
-                    
-                    # Try to load PDF
-                    load_result = _agent.load_url(url)
-                    
-                    if load_result.get("success"):
-                        doc_id = load_result["doc_id"]
-                        summary_result = _agent.summarize(doc_id, max_length=300)
-                        
-                        if not summary_result.get("error"):
-                            results.append({
-                                "title": f"Document from {url.split('/')[2]}",
-                                "url": url,
-                                "summary": summary_result.get("summary", "No summary available"),
-                                "doc_id": doc_id
-                            })
-                            loaded_count += 1
+                results.append({
+                    "title": title,
+                    "url": url,
+                    "snippet": snippet,
+                    "summary": summary,
+                    "doc_id": doc_id,
+                    "status": "loaded"
+                })
+                loaded_count += 1
+            else:
+                failed_loads.append(f"{title}: {load_result.get('error', 'Unknown error')}")
         
-        return results
+        # Format results
+        if not results and not failed_loads:
+            return f"No results found for query: '{query}'. Google Scholar may be blocking requests or no accessible documents found."
+        
+        output = f"**Web Research Results for: '{query}'**\n\n"
+        
+        if results:
+            output += f"**Successfully loaded {len(results)} document(s):**\n\n"
+            for i, result in enumerate(results, 1):
+                output += f"**{i}. {result['title']}**\n"
+                output += f"URL: {result['url']}\n"
+                if result['snippet']:
+                    output += f"Snippet: {result['snippet'][:200]}...\n"
+                output += f"Summary: {result['summary']}\n"
+                output += f"Document ID: {result['doc_id']}\n"
+                output += "-" * 50 + "\n"
+        
+        if failed_loads:
+            output += f"\n**Failed to load {len(failed_loads)} document(s):**\n"
+            for failure in failed_loads[:3]:  # Show first 3 failures
+                output += f"• {failure}\n"
+        
+        if loaded_count > 0:
+            output += f"\n**Note:** {loaded_count} documents have been added to your knowledge base and can be queried using `query_documents()`."
+        
+        return output
         
     except Exception as e:
-        return [{"error": str(e)}]
+        return f"Error in web research: {str(e)}"
 
 
 
