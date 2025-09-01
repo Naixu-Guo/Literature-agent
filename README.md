@@ -12,29 +12,23 @@ An AI-powered literature review agent built with LangChain and Google Gemini, sp
 ### Analysis Capabilities
 - **Document Summarization**: Generate concise summaries of research papers
 - **RAG-based Q&A**: Answer questions based on loaded documents
-- **Web Research**: Search for quantum computing literature online via DuckDuckGo
+- **Web Research**: Search for literature via Google Scholar (with safe fallbacks)
 
 ### API Endpoints
 
-#### 1. `summarize_source(source, temperature)`
-Summarize content from local files OR URLs (PDFs, text files, web pages).
-- Supports: Local PDFs, text files, web URLs, online PDF URLs
-- Returns: Comprehensive summary with key findings
+- `summarize_source(sources, title=None, max_length=800)`
+  - Summarize one or multiple sources (local PDFs/text or URLs)
+  - For multiple sources, returns an integrated summary using RAG
 
+- `query_documents(query, mode="answer"|"search", num_results=5)`
+  - Mode `search`: semantic search excerpts
+  - Mode `answer`: RAG answer with sources
 
-#### 2. `summarize_multiple_sources(sources, temperature)`
-Summarize multiple sources at once and get both individual and combined summaries.
-- Input: List of file paths and/or URLs
-- Returns: Individual summaries + synthesized overview
+- `web_research(query, num_results=5)`
+  - Searches Google Scholar and the web, loads and summarizes accessible documents
 
-#### 3. `build_vector_index(paths)`
-Build a FAISS vector index from multiple documents for efficient retrieval.
-
-#### 4. `rag_answer(question, index_dir, k, temperature)`
-Answer questions using retrieval-augmented generation over indexed documents.
-
-#### 5. `web_research(query, num_results)`
-Search for quantum computing research using Google Gemini's knowledge base with academic focus.
+- `list_documents()` / `delete_document(doc_id)` / `clear_all_documents()`
+  - Manage stored documents
 
 ## Setup
 
@@ -55,6 +49,10 @@ export GOOGLE_API_KEY="your-google-api-key"
 export GEMINI_MODEL="gemini-2.5-pro"  # Optional, defaults to gemini-2.5-pro
 export EMBED_MODEL="models/embedding-001"  # Optional
 export LLM_TEMPERATURE="0.2"  # Optional, defaults to 0.2
+export USER_AGENT="Literature-Agent/1.0"   # Optional
+export MAX_DOWNLOAD_BYTES="10485760"       # Optional, 10MB default
+export HOST="127.0.0.1"                    # Optional, default binds to localhost
+export PORT="8001"                          # Optional
 ```
 
 ### Running the Server
@@ -86,20 +84,12 @@ results = summarize_multiple_sources([
 ])
 ```
 
-### 2. Build Vector Index
+### 2. Ask Questions
 ```python
-index_path = build_vector_index([
-    "/path/to/paper1.pdf",
-    "/path/to/paper2.pdf"
-])
+answer = query_documents("What are the main quantum algorithms discussed?", mode="answer")
 ```
 
-### 3. Ask Questions
-```python
-answer = rag_answer("What are the main quantum algorithms discussed?")
-```
-
-### 4. Web Research
+### 3. Web Research
 ```python
 results = web_research("quantum error correction recent advances", num_results=5)
 ```
@@ -107,17 +97,16 @@ results = web_research("quantum error correction recent advances", num_results=5
 ## Important Notes
 
 ### API Quotas
-- **Google API**: Ensure you have sufficient quota. Check your usage at https://console.cloud.google.com/
+- **Google API**: Ensure you have sufficient quota. Check your usage at `https://console.cloud.google.com/`
 - If you encounter quota errors, the system will provide helpful error messages.
 
 ## Architecture
 
 The agent uses:
-- **LangChain**: For document processing and chain orchestration
+- **LangChain**: For document processing and orchestration
 - **Google Gemini**: For text generation and understanding
 - **FAISS**: For efficient vector similarity search
 - **PyPDF**: For PDF document parsing
-- **Gemini Knowledge Base**: For web research capabilities
 
 ## API Documentation
 

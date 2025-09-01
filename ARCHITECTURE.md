@@ -1,69 +1,65 @@
-# Literature Agent Architecture
+# Literature Agent - Clean Architecture
 
 ## Overview
-A unified MCP-based literature research agent with document persistence and RAG capabilities.
+A streamlined MCP-based literature research agent with document persistence and RAG capabilities.
 
 ## Project Structure
 
 ```
 Literature-agent/
 ├── main.py                  # Main entry point - starts the API server
-├── .env                     # Environment variables (API keys, model settings)
+├── .env                     # Environment variables (API keys, SECURED)
 ├── pyproject.toml          # Python project dependencies
 │
-├── tools/                   # Tool implementations
-│   ├── __init__.py
-│   ├── toolset.py          # Tool registration framework
-│   ├── literature_agent.py # Main API functions (unified MCP-based)
+├── tools/                   # Core implementations
+│   ├── literature_agent.py # Main API functions (6 core functions)
 │   ├── mcp_backend.py      # MCP backend implementation (internal)
-│   └── calculator.py       # Simple calculator tools for testing
+│   └── toolset.py          # Tool registration framework
 │
 ├── mcp_literature_storage/  # Persistent document storage
 │   └── *.json              # Stored document metadata and chunks
 │
 └── storage/                 # Vector database storage
     └── faiss/              # FAISS index files
-        ├── index.faiss
-        └── index.pkl
-
 ```
 
-## Architecture
+## Core API Functions (6 total)
 
-### 1. API Layer (`literature_agent.py`)
-All user-facing functions using unified MCP backend:
-- `summarize_source` - Load and summarize documents
-- `summarize_multiple_sources` - Batch summarization with combined insights
-- `build_vector_index` - Build searchable index from documents
-- `rag_answer` - Answer questions using RAG
-- `web_research` - Search and load web documents
-- `search_documents` - Search across stored documents
-- `list_documents` - List all stored documents
-- `delete_document` - Remove specific documents
-- `clear_all_documents` - Clear all storage
+### 1. Document Input/Processing
+- **`summarize_source`** - Load and summarize single or multiple sources
+  - Input: `Union[str, List[str]]` (files, URLs, or mixed)
+  - Output: Integrated summary for multiple sources
 
-### 2. MCP Backend (`mcp_backend.py`)
-Internal document management system:
-- Document loading (PDF, text, web)
-- Persistent storage with JSON metadata
-- Vector embeddings with FAISS
-- LLM integration (Google Gemini)
-- Document chunking and retrieval
+### 2. Document Query
+- **`query_documents`** - Query stored documents with two modes
+  - `mode="search"` - Find document excerpts
+  - `mode="answer"` - AI-generated answers with sources
 
-### 3. Benefits of Unified MCP Architecture
-- **Performance**: Documents loaded once, reused across operations
-- **Persistence**: Documents survive server restarts
-- **Efficiency**: Shared vector index for all RAG operations
-- **Consistency**: Single source of truth for document storage
-- **Scalability**: Can handle large document collections
+### 3. Web Research  
+- **`web_research`** - Search, download, and summarize web content
+  - Auto-downloads PDFs and research papers
+  - Stores in MCP for future queries
+
+### 4. Document Management
+- **`list_documents`** - List all stored documents
+- **`delete_document`** - Remove specific documents  
+- **`clear_all_documents`** - Clear all storage
+
+## Security Features
+✅ **API Key Protection**: Only in `.env` file (gitignored)
+✅ **No Key Exposure**: No hardcoded keys in any code files
+✅ **Clean Codebase**: No test/debug functions exposed
+✅ **Minimal Attack Surface**: Only 6 essential functions
 
 ## API Access
-- Interactive docs: http://localhost:8001/docs
-- Base URL: http://localhost:8001
+- **Interactive docs**: http://localhost:8001/docs
+- **Base URL**: http://localhost:8001
 
-## Environment Variables
-- `GOOGLE_API_KEY`: Required for Gemini LLM
-- `GEMINI_MODEL`: Model name (default: gemini-2.5-pro)
-- `EMBED_MODEL`: Embedding model (default: models/embedding-001)
-- `LLM_TEMPERATURE`: Model temperature (default: 0.2)
-- `USER_AGENT`: User agent for web requests
+## Environment Variables (Secured in .env)
+```bash
+GOOGLE_API_KEY=your-secure-api-key
+GEMINI_MODEL=gemini-2.5-pro  
+EMBED_MODEL=models/embedding-001
+LLM_TEMPERATURE=0.2
+USER_AGENT=Literature-Agent/1.0
+```

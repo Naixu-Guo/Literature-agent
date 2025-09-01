@@ -4,7 +4,7 @@ All functions use the MCP backend for optimal performance and consistency
 """
 
 import os
-from typing import Optional
+from typing import Optional, Union, List
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -15,202 +15,138 @@ from tools.mcp_backend import _agent
 
 
 @toolset.add()
-def summarize_source(source: str, title: Optional[str] = None, max_length: int = 800) -> str:
+def summarize_source(sources: Union[str, List[str]], title: Optional[str] = None, max_length: int = 800) -> str:
     """
-    Load and summarize content from a local file or URL using MCP backend.
+    Load and summarize content from one or multiple sources using MCP backend.
+    For multiple sources, provides an integrated summary across all documents.
     Documents are automatically stored for future operations.
     
-    :param source: absolute path to a local file (.pdf or .txt) or URL to a web page/PDF
-    :param title: optional title for the document
+    :param sources: single source (str) or list of sources - file paths (.pdf, .txt) or URLs
+    :param title: optional title for single document (ignored for multiple sources)
     :param max_length: maximum length of the summary (default: 800)
-    :return: summary string
+    :return: integrated summary string
     """
     try:
-        # Convert arXiv abstract URLs to PDF URLs for better loading
-        if 'arxiv.org/abs/' in source:
-            source = source.replace('/abs/', '/pdf/') + '.pdf'
-        elif 'journals.aps.org/' in source and '/abstract/' in source:
-            source = source.replace('/abstract/', '/pdf/')
+        # Handle single source case
+        if isinstance(sources, str):
+            sources = [sources]
         
-        # Load document using MCP backend
-        if source.startswith(('http://', 'https://')):
-            load_result = _agent.load_url(source, title=title)
+        doc_ids = []
+        failed_sources = []
+        
+        # Load all sources
+        for source in sources:
+            # Convert arXiv abstract URLs to PDF URLs for better loading
+            if 'arxiv.org/abs/' in source:
+                source = source.replace('/abs/', '/pdf/') + '.pdf'
+            elif 'journals.aps.org/' in source and '/abstract/' in source:
+                source = source.replace('/abstract/', '/pdf/')
+            
+            # Load document using MCP backend
+            if source.startswith(('http://', 'https://')):
+                load_result = _agent.load_url(source, title=title if len(sources) == 1 else None)
+            else:
+                if not os.path.isfile(source):
+                    failed_sources.append(f"File not found: {source}")
+                    continue
+                load_result = _agent.load_file(source, title=title if len(sources) == 1 else None)
+            
+            if "error" in load_result or not load_result.get("success"):
+                failed_sources.append(f"Failed to load: {source}")
+                continue
+            
+            doc_ids.append(load_result["doc_id"])
+        
+        if not doc_ids:
+            return f"No documents could be loaded. Errors: {'; '.join(failed_sources)}"
+        
+        # Generate integrated summary
+        if len(doc_ids) == 1:
+            # Single document - direct summarization
+            summary_result = _agent.summarize(doc_ids[0], max_length=max_length)
+            
+            if "error" in summary_result:
+                return f"Error generating summary: {summary_result['error']}"
+            
+            summary = summary_result.get("summary", "No summary available")
         else:
-            if not os.path.isfile(source):
-                return f"File not found: {source}"
-            load_result = _agent.load_file(source, title=title)
+            # Multiple documents - use RAG for integrated summary limited to these docs
+            integrated_question = (
+                f"Provide a comprehensive integrated summary of the main themes, findings, and insights across all {len(doc_ids)} documents. "
+                f"Maximum length: {max_length} characters."
+            )
+            combined_result = _agent.ask_question(integrated_question, doc_ids=doc_ids, num_sources=len(doc_ids))
+            
+            if "error" in combined_result:
+                return f"Error generating integrated summary: {combined_result['error']}"
+            
+            summary = combined_result.get("answer", "No integrated summary available")
         
-        if "error" in load_result:
-            return f"Error loading document: {load_result['error']}"
+        # Add information about failed sources if any
+        if failed_sources:
+            summary += f"\n\nNote: {len(failed_sources)} source(s) failed to load: {'; '.join(failed_sources)}"
         
-        if not load_result.get("success"):
-            return "Failed to load document"
-        
-        # Get document ID
-        doc_id = load_result["doc_id"]
-        
-        # Generate summary using MCP backend
-        summary_result = _agent.summarize(doc_id, max_length=max_length)
-        
-        if "error" in summary_result:
-            return f"Error generating summary: {summary_result['error']}"
-        
-        return summary_result.get("summary", "No summary available")
+        return summary
         
     except Exception as e:
         return f"Error: {str(e)}"
 
 
+
+
+
+
 @toolset.add()
-def summarize_multiple_sources(sources: list, max_length_per_source: int = 500) -> dict:
+def query_documents(query: str, mode: str = "answer", num_results: int = 5) -> str:
     """
-    Load and summarize multiple sources using MCP backend.
-    All documents are stored for future operations.
+    Query documents with two modes: search for excerpts or get AI-generated answers.
     
-    :param sources: list of file paths or URLs
-    :param max_length_per_source: maximum length per summary (default: 500)
-    :return: dictionary with combined summary and individual summaries
+    :param query: search query or question
+    :param mode: "search" for document excerpts, "answer" for AI-generated response (default: "answer")
+    :param num_results: number of results/sources to use (default: 5)
+    :return: search results or answer with sources
     """
     try:
-        summaries = {}
-        doc_ids = []
+        if mode not in ["search", "answer"]:
+            return f"Invalid mode '{mode}'. Use 'search' or 'answer'."
         
-        # Load and summarize each source
-        for source in sources:
-            # Convert URLs if needed
-            if 'arxiv.org/abs/' in source:
-                source = source.replace('/abs/', '/pdf/') + '.pdf'
-            elif 'journals.aps.org/' in source and '/abstract/' in source:
-                source = source.replace('/abstract/', '/pdf/')
+        if mode == "search":
+            # Search mode: return document excerpts
+            result = _agent.search(query, num_results=num_results)
             
-            # Load document
-            if source.startswith(('http://', 'https://')):
-                load_result = _agent.load_url(source)
-            else:
-                if not os.path.isfile(source):
-                    summaries[source] = f"File not found: {source}"
-                    continue
-                load_result = _agent.load_file(source)
+            if "error" in result:
+                return f"Error: {result['error']}"
             
-            if "error" in load_result:
-                summaries[source] = f"Error loading: {load_result['error']}"
-                continue
+            matches = result.get("results", [])
             
-            if not load_result.get("success"):
-                summaries[source] = "Failed to load document"
-                continue
+            if not matches:
+                return "No matching documents found."
             
-            doc_id = load_result["doc_id"]
-            doc_ids.append(doc_id)
+            # Format search results
+            output = f"Found {len(matches)} relevant documents:\n\n"
+            for i, match in enumerate(matches, 1):
+                output += f"{i}. {match}\n\n"
             
-            # Summarize
-            summary_result = _agent.summarize(doc_id, max_length=max_length_per_source)
-            if "error" in summary_result:
-                summaries[source] = f"Error: {summary_result['error']}"
-            else:
-                summaries[source] = summary_result.get("summary", "No summary available")
+            return output
         
-        # Generate combined summary using RAG across all documents
-        if doc_ids:
-            combined_question = "Provide a comprehensive summary of the main themes, findings, and insights across all these documents."
-            combined_result = _agent.ask_question(combined_question, num_sources=len(doc_ids))
-            
-            if "error" in combined_result:
-                combined_summary = f"Error generating combined summary: {combined_result['error']}"
-            else:
-                combined_summary = combined_result.get("answer", "No combined summary available")
         else:
-            combined_summary = "No documents were successfully loaded."
-        
-        return {
-            "combined_summary": combined_summary,
-            "individual_summaries": summaries
-        }
-        
-    except Exception as e:
-        return {
-            "combined_summary": f"Error: {str(e)}",
-            "individual_summaries": {}
-        }
-
-
-@toolset.add()
-def build_vector_index(sources: list) -> str:
-    """
-    Build a vector index from multiple documents using MCP backend.
-    Documents are loaded and stored with embeddings for RAG operations.
-    
-    :param sources: list of file paths or URLs to index
-    :return: status message
-    """
-    try:
-        successful = 0
-        failed = 0
-        
-        for source in sources:
-            # Convert URLs if needed
-            if 'arxiv.org/abs/' in source:
-                source = source.replace('/abs/', '/pdf/') + '.pdf'
-            elif 'journals.aps.org/' in source and '/abstract/' in source:
-                source = source.replace('/abstract/', '/pdf/')
+            # Answer mode: use RAG to generate answer
+            result = _agent.ask_question(query, num_sources=num_results)
             
-            # Load document
-            if source.startswith(('http://', 'https://')):
-                load_result = _agent.load_url(source)
-            else:
-                if not os.path.isfile(source):
-                    failed += 1
-                    continue
-                load_result = _agent.load_file(source)
+            if "error" in result:
+                return f"Error: {result['error']}"
             
-            if load_result.get("success"):
-                successful += 1
-            else:
-                failed += 1
-        
-        # The MCP backend automatically builds embeddings when documents are loaded
-        status = f"Vector index built: {successful} documents indexed successfully"
-        if failed > 0:
-            status += f", {failed} documents failed"
-        
-        # List all documents to confirm
-        docs = _agent.list_documents()
-        if docs.get("documents"):
-            status += f". Total documents in index: {len(docs['documents'])}"
-        
-        return status
-        
-    except Exception as e:
-        return f"Error building vector index: {str(e)}"
-
-
-@toolset.add()
-def rag_answer(question: str, num_sources: int = 5) -> str:
-    """
-    Answer a question using RAG over all indexed documents in MCP storage.
-    
-    :param question: the question to answer
-    :param num_sources: number of source chunks to retrieve (default: 5)
-    :return: the answer with sources
-    """
-    try:
-        # Use MCP backend's ask_question which performs RAG
-        result = _agent.ask_question(question, num_sources=num_sources)
-        
-        if "error" in result:
-            return f"Error: {result['error']}"
-        
-        answer = result.get("answer", "No answer available")
-        sources = result.get("sources", [])
-        
-        # Format response with sources
-        response = f"{answer}\n"
-        if sources:
-            response += "\n\nSources:\n"
-            for i, source in enumerate(sources, 1):
-                response += f"{i}. {source}\n"
-        
-        return response
+            answer = result.get("answer", "No answer available")
+            sources = result.get("sources", [])
+            
+            # Format response with sources
+            response = f"{answer}\n"
+            if sources:
+                response += "\n\nSources:\n"
+                for i, source in enumerate(sources, 1):
+                    response += f"{i}. {source}\n"
+            
+            return response
         
     except Exception as e:
         return f"Error: {str(e)}"
@@ -323,35 +259,6 @@ def web_research(query: str, num_results: int = 5) -> list:
         return [{"error": str(e)}]
 
 
-@toolset.add()
-def search_documents(query: str, num_results: int = 5) -> str:
-    """
-    Search across all stored documents in MCP storage.
-    
-    :param query: search query
-    :param num_results: number of results to return (default: 5)
-    :return: search results with relevant excerpts
-    """
-    try:
-        result = _agent.search(query, num_results=num_results)
-        
-        if "error" in result:
-            return f"Error: {result['error']}"
-        
-        matches = result.get("results", [])
-        
-        if not matches:
-            return "No matching documents found."
-        
-        # Format results
-        output = f"Found {len(matches)} relevant documents:\n\n"
-        for i, match in enumerate(matches, 1):
-            output += f"{i}. {match}\n\n"
-        
-        return output
-        
-    except Exception as e:
-        return f"Error: {str(e)}"
 
 
 @toolset.add()
@@ -375,11 +282,15 @@ def list_documents() -> str:
         # Format document list
         output = f"Documents in storage ({len(docs)} total):\n\n"
         for doc in docs:
+            title = doc.get('metadata', {}).get('title') or doc.get('id')
+            created_at = doc.get('created_at', 'unknown')
             output += f"ID: {doc['id']}\n"
-            output += f"Title: {doc['title']}\n"
-            output += f"Source: {doc['source']}\n"
-            output += f"Loaded: {doc['loaded_at']}\n"
-            output += f"Chunks: {doc['num_chunks']}\n"
+            output += f"Title: {title}\n"
+            output += f"Source: {doc.get('source', 'unknown')}\n"
+            output += f"Created: {created_at}\n"
+            output += f"Chunks: {doc.get('num_chunks', 0)}\n"
+            output += f"Has embeddings: {doc.get('has_embeddings', False)}\n"
+            output += f"Has summary: {doc.get('has_summary', False)}\n"
             output += "-" * 50 + "\n"
         
         return output

@@ -29,6 +29,8 @@ ENV/
 
 # Project specific
 storage/
+mcp_literature_storage/
+mcp_literature_storage/*.json
 *.pdf
 *.log
 *.db

@@ -10,8 +10,9 @@ RUN apk add --no-cache git
 # Install dependencies
 RUN uv pip install --system -e .
 
-# Expose default Node.js port
-EXPOSE 8000
+# Expose app port
+EXPOSE 8001
 
 # Start the application
+ENV HOST=0.0.0.0 PORT=8001
 CMD ["python", "main.py"]

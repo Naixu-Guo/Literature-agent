@@ -10,6 +10,7 @@ import hashlib
 import tempfile
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -95,7 +96,7 @@ class SimpleMCPLiteratureAgent:
                     pdf_reader = pypdf.PdfReader(file)
                     text = ""
                     for page in pdf_reader.pages:
-                        text += page.extract_text()
+                        text += page.extract_text() or ""
                 
                 metadata = {
                     "title": title or file_path.stem,
@@ -128,41 +129,81 @@ class SimpleMCPLiteratureAgent:
         return self.load_file(path, title)
     
     def load_url(self, url: str, title: Optional[str] = None) -> dict:
-        """Load and process content from a URL"""
+        """Load and process content from a URL with basic SSRF and size protections"""
         try:
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
+            # Basic SSRF protection: block private/internal IPs and file schemes
+            parsed = urlparse(url)
+            if parsed.scheme not in {"http", "https"}:
+                return {"error": "Only http/https URLs are allowed"}
+
+            # Disallow obvious localhost/internal hosts
+            hostname = (parsed.hostname or "").lower()
+            blocked_hosts = {"localhost", "127.0.0.1", "::1"}
+            if hostname in blocked_hosts:
+                return {"error": "Access to local/loopback addresses is not allowed"}
+
+            # Enforce content length limit via headers when available
+            max_bytes = int(os.getenv("MAX_DOWNLOAD_BYTES", "10485760"))  # 10 MB default
+            headers = {"User-Agent": os.getenv("USER_AGENT", "Literature-Agent/1.0")}
+            with requests.get(url, headers=headers, stream=True, timeout=30) as response:
+                response.raise_for_status()
+                content_type = response.headers.get("Content-Type", "")
+                content_length = response.headers.get("Content-Length")
+                if content_length and int(content_length) > max_bytes:
+                    return {"error": "Remote file too large"}
+
+                if url.endswith('.pdf') or 'application/pdf' in content_type:
+                    # Handle PDF URLs with streamed write and size cap
+                    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
+                        downloaded = 0
+                        for chunk in response.iter_content(chunk_size=65536):
+                            if not chunk:
+                                break
+                            downloaded += len(chunk)
+                            if downloaded > max_bytes:
+                                tmp_path = tmp_file.name
+                                tmp_file.close()
+                                Path(tmp_path).unlink(missing_ok=True)
+                                return {"error": "Downloaded file exceeded size limit"}
+                            tmp_file.write(chunk)
+                        tmp_path = tmp_file.name
+                    try:
+                        result = self.load_pdf(tmp_path, title or url)
+                    finally:
+                        Path(tmp_path).unlink(missing_ok=True)
+                    return result
+                else:
+                    # Handle HTML safely with size cap
+                    text_chunks: List[str] = []
+                    downloaded = 0
+                    for chunk in response.iter_content(chunk_size=65536, decode_unicode=True):
+                        if not chunk:
+                            break
+                        downloaded += len(chunk)
+                        if downloaded > max_bytes:
+                            return {"error": "Downloaded content exceeded size limit"}
+                        text_chunks.append(chunk)
+                    html_text = ''.join(text_chunks)
+
+            soup = BeautifulSoup(html_text, 'html.parser')
             
-            if url.endswith('.pdf'):
-                # Handle PDF URLs
-                with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
-                    tmp_file.write(response.content)
-                    tmp_path = tmp_file.name
-                
-                result = self.load_pdf(tmp_path, title or url)
-                Path(tmp_path).unlink()
-                return result
-            else:
-                # Handle HTML
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                for script in soup(["script", "style"]):
-                    script.decompose()
-                text = soup.get_text()
-                lines = (line.strip() for line in text.splitlines())
-                chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-                text = ' '.join(chunk for chunk in chunks if chunk)
-                
-                doc_id = hashlib.md5(f"{url}_{datetime.now().isoformat()}".encode()).hexdigest()[:12]
-                
-                metadata = {
-                    "title": title or (soup.title.string if soup.title else url),
-                    "source_type": "url",
-                    "url": url,
-                    "content_length": len(text)
-                }
-                
-                return self._process_document(doc_id, url, text, metadata)
+            for script in soup(["script", "style"]):
+                script.decompose()
+            text = soup.get_text()
+            lines = (line.strip() for line in text.splitlines())
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            text = ' '.join(chunk for chunk in chunks if chunk)
+            
+            doc_id = hashlib.md5(f"{url}_{datetime.now().isoformat()}".encode()).hexdigest()[:12]
+            
+            metadata = {
+                "title": title or (soup.title.string if getattr(soup, 'title', None) and soup.title.string else url),
+                "source_type": "url",
+                "url": url,
+                "content_length": len(text)
+            }
+            
+            return self._process_document(doc_id, url, text, metadata)
                 
         except Exception as e:
             return {"error": f"Failed to load URL: {str(e)}"}
