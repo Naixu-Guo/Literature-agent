@@ -8,7 +8,7 @@ dependencies = [
     "simpletooling @ git+https://github.com/EvoEvolver/simpletooling.git",
     "langchain>=0.2.14",
     "langchain-community>=0.2.12",
-    "langchain-openai>=0.1.23",
+    "langchain-google-genai>=2.1.10",
     "pypdf>=4.2.0",
     "faiss-cpu>=1.8.0.post1",
     "tiktoken>=0.7.0",

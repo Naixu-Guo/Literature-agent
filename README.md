@@ -1,6 +1,6 @@
 # Literature Review Agent for Quantum Computing
 
-An AI-powered literature review agent built with LangChain and OpenAI, specialized for quantum computing research.
+An AI-powered literature review agent built with LangChain and Google Gemini, specialized for quantum computing research.
 
 ## Features
 
@@ -21,29 +21,26 @@ Summarize content from local files OR URLs (PDFs, text files, web pages).
 - Supports: Local PDFs, text files, web URLs, online PDF URLs
 - Returns: Comprehensive summary with key findings
 
-#### 2. `summarize_file(path, temperature)` 
-Legacy endpoint for local files (backward compatibility).
 
-#### 3. `summarize_multiple_sources(sources, temperature)`
+#### 2. `summarize_multiple_sources(sources, temperature)`
 Summarize multiple sources at once and get both individual and combined summaries.
 - Input: List of file paths and/or URLs
 - Returns: Individual summaries + synthesized overview
 
-#### 4. `build_vector_index(paths)`
+#### 3. `build_vector_index(paths)`
 Build a FAISS vector index from multiple documents for efficient retrieval.
 
-#### 5. `rag_answer(question, index_dir, k, temperature)`
+#### 4. `rag_answer(question, index_dir, k, temperature)`
 Answer questions using retrieval-augmented generation over indexed documents.
 
-#### 6. `web_research(query, num_results)`
-Search for quantum computing research using Perplexity AI with academic focus.
+#### 5. `web_research(query, num_results)`
+Search for quantum computing research using Google Gemini's knowledge base with academic focus.
 
 ## Setup
 
 ### Prerequisites
 - Python 3.12+
-- OpenAI API key with available credits
-- Perplexity API key (optional, for web search)
+- Google API key with available credits
 
 ### Installation
 
@@ -54,9 +51,9 @@ pip install -e .
 
 2. Set environment variables:
 ```bash
-export OPENAI_API_KEY="your-api-key"
-export OPENAI_MODEL="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
-export EMBED_MODEL="text-embedding-3-small"  # Optional
+export GOOGLE_API_KEY="your-google-api-key"
+export GEMINI_MODEL="gemini-2.5-pro"  # Optional, defaults to gemini-2.5-pro
+export EMBED_MODEL="models/embedding-001"  # Optional
 export LLM_TEMPERATURE="0.2"  # Optional, defaults to 0.2
 ```
 
@@ -66,7 +63,7 @@ export LLM_TEMPERATURE="0.2"  # Optional, defaults to 0.2
 python main.py
 ```
 
-The API server will start at `http://localhost:8000`
+The API server will start at `http://localhost:8001`
 
 ## Usage Examples
 
@@ -110,22 +107,21 @@ results = web_research("quantum error correction recent advances", num_results=5
 ## Important Notes
 
 ### API Quotas
-- **OpenAI**: Ensure you have sufficient credits. Check your usage at https://platform.openai.com/account/billing
-- **Perplexity**: Free tier has rate limits. Consider upgrading for production use.
+- **Google API**: Ensure you have sufficient quota. Check your usage at https://console.cloud.google.com/
 - If you encounter quota errors, the system will provide helpful error messages.
 
 ## Architecture
 
 The agent uses:
 - **LangChain**: For document processing and chain orchestration
-- **OpenAI GPT**: For text generation and understanding
+- **Google Gemini**: For text generation and understanding
 - **FAISS**: For efficient vector similarity search
 - **PyPDF**: For PDF document parsing
-- **DuckDuckGo Search**: For web research capabilities
+- **Gemini Knowledge Base**: For web research capabilities
 
 ## API Documentation
 
-The full API documentation is available at `http://localhost:8000/docs` when the server is running.
+The full API documentation is available at `http://localhost:8001/docs` when the server is running.
 
 ## License
 
