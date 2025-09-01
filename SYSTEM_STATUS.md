@@ -2,8 +2,8 @@
 
 ## ✅ **SYSTEM OPTIMIZED AND OPERATIONAL**
 
-### **API Key Updated**
-- New Google API key: `AIzaSyBMR_KU5nxEXyz48O86L177HPeqGxQ8nFM`
+### **API Configuration**
+- Google API key: Configured in .env file (NOT exposed in code)
 - Dynamic API key loading: Changes in .env take effect automatically
 - All functions working with embeddings and Q&A
 
