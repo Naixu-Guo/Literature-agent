@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlparse
+import ipaddress
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -138,15 +139,47 @@ class SimpleMCPLiteratureAgent:
 
             # Disallow obvious localhost/internal hosts
             hostname = (parsed.hostname or "").lower()
-            blocked_hosts = {"localhost", "127.0.0.1", "::1"}
+            blocked_hosts = {"localhost", "127.0.0.1", "::1", "0.0.0.0", "169.254.169.254"}
             if hostname in blocked_hosts:
                 return {"error": "Access to local/loopback addresses is not allowed"}
+
+            # Block direct private/reserved IP access
+            try:
+                ip = ipaddress.ip_address(hostname)
+                if (
+                    ip.is_private
+                    or ip.is_loopback
+                    or ip.is_link_local
+                    or ip.is_reserved
+                    or ip.is_multicast
+                ):
+                    return {"error": "Access to private/reserved IP ranges is not allowed"}
+            except ValueError:
+                # Not an IP literal; proceed
+                pass
 
             # Enforce content length limit via headers when available
             max_bytes = int(os.getenv("MAX_DOWNLOAD_BYTES", "10485760"))  # 10 MB default
             headers = {"User-Agent": os.getenv("USER_AGENT", "Literature-Agent/1.0")}
             with requests.get(url, headers=headers, stream=True, timeout=30) as response:
                 response.raise_for_status()
+                # Re-validate after redirects
+                final_host = urlparse(response.url).hostname or ""
+                final_host_l = final_host.lower()
+                if final_host_l in blocked_hosts:
+                    return {"error": "Redirected to a disallowed host"}
+                try:
+                    final_ip = ipaddress.ip_address(final_host_l)
+                    if (
+                        final_ip.is_private
+                        or final_ip.is_loopback
+                        or final_ip.is_link_local
+                        or final_ip.is_reserved
+                        or final_ip.is_multicast
+                    ):
+                        return {"error": "Redirected to a private/reserved IP"}
+                except ValueError:
+                    pass
                 content_type = response.headers.get("Content-Type", "")
                 content_length = response.headers.get("Content-Length")
                 if content_length and int(content_length) > max_bytes:
