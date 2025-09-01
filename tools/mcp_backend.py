@@ -3,10 +3,8 @@ Simple MCP Integration for Literature Agent
 Provides MCP functionality without complex async handling
 """
 
-from tools.toolset import toolset
 from typing import List, Optional
 import os
-import sys
 import json
 import hashlib
 import tempfile
@@ -18,7 +16,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import pypdf
-import numpy as np
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
 import requests
@@ -424,7 +421,6 @@ class SimpleMCPLiteratureAgent:
 _agent = SimpleMCPLiteratureAgent()
 
 
-@toolset.add()
 def mcp_load_document(source: str, title: Optional[str] = None) -> str:
     """Load a document (PDF, text file, or URL) into the MCP system for processing."""
     
@@ -450,7 +446,6 @@ def mcp_load_document(source: str, title: Optional[str] = None) -> str:
         return f"Error loading document: {str(e)}"
 
 
-@toolset.add()
 def mcp_search_documents(query: str, num_results: int = 5) -> str:
     """Search across all loaded documents using semantic search."""
     
@@ -476,7 +471,6 @@ def mcp_search_documents(query: str, num_results: int = 5) -> str:
         return f"Error searching documents: {str(e)}"
 
 
-@toolset.add()
 def mcp_summarize_document(doc_id: str, max_length: int = 500) -> str:
     """Generate a summary of a loaded document."""
     
@@ -498,7 +492,6 @@ def mcp_summarize_document(doc_id: str, max_length: int = 500) -> str:
         return f"Error summarizing document: {str(e)}"
 
 
-@toolset.add()
 def mcp_ask_question(question: str, num_sources: int = 4) -> str:
     """Ask a question about the loaded documents using RAG."""
     
@@ -522,7 +515,6 @@ def mcp_ask_question(question: str, num_sources: int = 4) -> str:
         return f"Error answering question: {str(e)}"
 
 
-@toolset.add()
 def mcp_list_documents() -> str:
     """List all documents currently loaded in the MCP system."""
     
@@ -552,7 +544,6 @@ def mcp_list_documents() -> str:
         return f"Error listing documents: {str(e)}"
 
 
-@toolset.add()
 def mcp_delete_document(doc_id: str) -> str:
     """Delete a document from the MCP system."""
     
@@ -571,7 +562,6 @@ def mcp_delete_document(doc_id: str) -> str:
         return f"Error deleting document: {str(e)}"
 
 
-@toolset.add()
 def mcp_batch_load(sources: List[str]) -> str:
     """Load multiple documents at once."""
     
