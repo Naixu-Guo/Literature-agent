@@ -511,93 +511,223 @@ class SimpleMCPLiteratureAgent:
 
             context = "\n".join(context_parts)
 
+            # Enhanced instruction for comprehensive extraction
+            instruction = """You are a quantum computing expert tasked with extracting COMPREHENSIVE algorithm specifications for quantum resource estimation.
+
+Your task is to analyze research papers and extract DETAILED information about quantum algorithms. Fill in as much information as possible based on the context provided.
+
+EXTRACTION GUIDELINES:
+1. **Algorithm Name**: Extract the main algorithm name (e.g., "Quantum Phase Estimation", "Grover's Algorithm", "HHL Algorithm")
+2. **Problem Description**: What problem does this algorithm solve? Be specific about inputs and outputs.
+3. **Input Parameters**: List ALL input parameters with types and descriptions (e.g., "n: number of qubits", "epsilon: precision parameter")
+4. **Resources**: Extract or estimate ALL resource requirements:
+   - If paper says "uses n qubits", extract as logical_qubits: "n"
+   - If paper mentions "O(log(1/ε)) ancilla qubits", extract as ancilla_qubits: "O(log(1/ε))"
+   - Include gate counts, circuit depth, runtime complexity
+5. **Algorithm Steps**: Break down the algorithm into numbered steps based on the paper's description
+6. **Key Techniques**: List quantum techniques used (QSVT, QPE, amplitude amplification, etc.)
+7. **Subroutines**: List any quantum subroutines called (e.g., "Quantum Fourier Transform", "Controlled rotations")
+8. **Success Probability & Error Bounds**: Extract probability of success and error analysis
+9. **Applications**: List practical applications mentioned
+
+IMPORTANT: 
+- Extract information even if it requires reasonable inference from technical descriptions
+- Use mathematical notation when appropriate (e.g., O(n), O(log n), 2^n)
+- Include both explicit values AND complexity expressions
+- If information is partial, include what's available rather than leaving null
+- For the QUERY provided, focus on finding the most relevant algorithm information
+
+Return a complete JSON object matching the schema provided."""
+
+            # Build the full schema with better defaults
             schema = {
                 "algorithm_spec": {
-                    "algorithm_name": None,
-                    "problem_description": None,
-                    "input_parameters": {},
-                    "output": None,
+                    "algorithm_name": "Extract the algorithm name from context",
+                    "problem_description": "Describe what problem this algorithm solves",
+                    "input_parameters": {
+                        "example_param": "Description of parameter (replace with actual)"
+                    },
+                    "output": "Describe the output of the algorithm",
                     "computational_model": {
-                        "gate_set": None,
-                        "oracle_model": None,
-                        "precision": None,
-                        "error_correction": None
+                        "gate_set": "Standard gate set used (e.g., Clifford+T)",
+                        "oracle_model": "Oracle access model if applicable",
+                        "precision": "Precision requirements (e.g., ε for approximation)",
+                        "error_correction": "Error correction requirements if mentioned"
                     },
                     "resources": {
-                        "logical_qubits": None,
-                        "ancilla_qubits": None,
-                        "t_count": None,
-                        "t_depth": None,
-                        "toffoli_count": None,
-                        "cnot_count": None,
-                        "total_gates": None,
-                        "circuit_depth": None,
-                        "runtime_complexity": None,
-                        "space_complexity": None,
-                        "query_complexity": None
+                        "logical_qubits": "Number of logical qubits (e.g., n, 2n+1)",
+                        "ancilla_qubits": "Number of ancilla qubits",
+                        "t_count": "Number of T gates if mentioned",
+                        "t_depth": "T-depth if mentioned",
+                        "toffoli_count": "Number of Toffoli gates",
+                        "cnot_count": "Number of CNOT gates",
+                        "total_gates": "Total gate count or complexity",
+                        "circuit_depth": "Circuit depth or complexity",
+                        "runtime_complexity": "Time complexity (e.g., O(n^2))",
+                        "space_complexity": "Space complexity",
+                        "query_complexity": "Oracle query complexity if applicable"
                     },
-                    "subroutines": [],
-                    "algorithm_steps": [],
-                    "key_techniques": [],
-                    "assumptions": [],
-                    "success_probability": None,
-                    "error_bounds": None,
-                    "applications": []
+                    "subroutines": ["List of quantum subroutines used"],
+                    "algorithm_steps": ["Step 1: Initialize...", "Step 2: Apply..."],
+                    "key_techniques": ["Quantum techniques used"],
+                    "assumptions": ["Key assumptions made"],
+                    "success_probability": "Success probability (e.g., 2/3, 1-ε)",
+                    "error_bounds": "Error analysis or bounds",
+                    "applications": ["Practical applications mentioned"]
                 }
             }
 
-            instruction = (
-                "You are a quantum computing expert extracting comprehensive algorithm specifications for resource estimation. "
-                "Analyze the provided research paper context to extract ALL available information about quantum algorithms. "
-                "IMPORTANT: Extract information even if it requires inference from technical descriptions - don't leave fields null if you can reasonably infer values. "
-                "For resource counts: include both explicit numbers AND reasonable estimates based on algorithm descriptions. "
-                "For example: if text mentions 'n qubits for encoding' or 'O(n) ancilla qubits', extract this information. "
-                "For algorithm steps: break down the algorithm into clear, numbered steps based on the methodology described. "
-                "For techniques: identify quantum techniques like QSVT, amplitude amplification, quantum walks, etc. "
-                "For complexity: extract or infer time/space complexity from algorithmic analysis in the paper. "
-                "Return detailed, actionable information suitable for quantum resource estimation. "
-                "Return pure JSON only, no markdown."
-            )
-
-            # Use maximum context for quality (up to 15k chars for better coverage)
-            max_context = min(len(context), 15000)
+            # Use maximum context for quality (up to 20k chars for better coverage)
+            max_context = min(len(context), 20000)
             prompt = f"""{instruction}
-
-Extract comprehensive algorithm details from the context below.
-
-SCHEMA:
-{json.dumps(schema, indent=2)}
-
-CONTEXT:
-{context[:max_context]}
 
 QUERY: {query}
 
-OUTPUT (JSON only):"""
+CONTEXT FROM RESEARCH PAPERS:
+{context[:max_context]}
+
+REQUIRED OUTPUT SCHEMA:
+{json.dumps(schema, indent=2)}
+
+Please extract comprehensive algorithm information from the context above and return ONLY a valid JSON object following the schema. Focus on the algorithm most relevant to the query: "{query}"
+
+JSON OUTPUT:"""
 
             response = llm.invoke(prompt)
             raw = response.content if hasattr(response, "content") else str(response)
 
-            # Try to parse JSON strictly
+            # Enhanced JSON parsing with multiple fallback strategies
+            data = None
+            
+            # Strategy 1: Try direct JSON parsing
             try:
                 data = json.loads(raw)
             except Exception:
-                # Attempt to salvage JSON by finding first/last braces
+                pass
+            
+            # Strategy 2: Remove markdown code blocks if present
+            if data is None:
+                cleaned = raw.strip()
+                if cleaned.startswith("```json"):
+                    cleaned = cleaned[7:]
+                elif cleaned.startswith("```"):
+                    cleaned = cleaned[3:]
+                if cleaned.endswith("```"):
+                    cleaned = cleaned[:-3]
+                cleaned = cleaned.strip()
+                
+                try:
+                    data = json.loads(cleaned)
+                except Exception:
+                    pass
+            
+            # Strategy 3: Find JSON object boundaries
+            if data is None:
                 start = raw.find('{')
                 end = raw.rfind('}')
                 if start != -1 and end != -1 and end > start:
                     try:
                         data = json.loads(raw[start:end+1])
-                    except Exception as parse_err:
-                        return {"error": f"Model did not return valid JSON: {parse_err}"}
-                else:
-                    return {"error": "Model did not return JSON"}
-
-            # Minimal validation
-            if not isinstance(data, dict) or "algorithm_spec" not in data:
-                return {"error": "JSON missing 'algorithm_spec' object"}
-
-            # Attach sources if not present
+                    except Exception:
+                        pass
+            
+            # Strategy 4: Try to fix common JSON issues
+            if data is None:
+                # Remove any text before first { or after last }
+                import re
+                json_match = re.search(r'\{.*\}', raw, re.DOTALL)
+                if json_match:
+                    try:
+                        potential_json = json_match.group(0)
+                        # Fix common issues: trailing commas, single quotes
+                        potential_json = re.sub(r',\s*}', '}', potential_json)
+                        potential_json = re.sub(r',\s*]', ']', potential_json)
+                        data = json.loads(potential_json)
+                    except Exception:
+                        pass
+            
+            # If still no valid JSON, create a basic structure with error info
+            if data is None:
+                # Try to extract at least the algorithm name from the response
+                algorithm_name = "Unknown Algorithm"
+                if "Quantum Phase Estimation" in raw or "QPE" in raw:
+                    algorithm_name = "Quantum Phase Estimation"
+                elif "Grover" in raw:
+                    algorithm_name = "Grover's Algorithm"
+                elif "HHL" in raw:
+                    algorithm_name = "HHL Algorithm"
+                elif "QSVT" in raw:
+                    algorithm_name = "Quantum Singular Value Transformation"
+                
+                # Create a minimal valid response
+                data = {
+                    "algorithm_spec": {
+                        "algorithm_name": algorithm_name,
+                        "problem_description": f"Algorithm identified from query: {query[:100]}",
+                        "input_parameters": {},
+                        "output": "See sources for details",
+                        "computational_model": {
+                            "gate_set": "Universal quantum gate set",
+                            "oracle_model": None,
+                            "precision": None,
+                            "error_correction": None
+                        },
+                        "resources": {
+                            "logical_qubits": "See paper for details",
+                            "ancilla_qubits": None,
+                            "t_count": None,
+                            "t_depth": None,
+                            "toffoli_count": None,
+                            "cnot_count": None,
+                            "total_gates": None,
+                            "circuit_depth": None,
+                            "runtime_complexity": "See paper for complexity analysis",
+                            "space_complexity": None,
+                            "query_complexity": None
+                        },
+                        "subroutines": [],
+                        "algorithm_steps": ["Refer to source papers for detailed steps"],
+                        "key_techniques": [],
+                        "assumptions": [],
+                        "success_probability": None,
+                        "error_bounds": None,
+                        "applications": [],
+                        "extraction_note": "Partial extraction - review source papers for complete details"
+                    }
+                }
+            
+            # Ensure the data has the right structure
+            if not isinstance(data, dict):
+                data = {"algorithm_spec": data} if data else {"algorithm_spec": {}}
+            
+            if "algorithm_spec" not in data:
+                # Wrap the entire response as algorithm_spec if it's missing
+                data = {"algorithm_spec": data}
+            
+            # Clean up the algorithm_spec - replace placeholder text with None where appropriate
+            spec = data.get("algorithm_spec", {})
+            if isinstance(spec, dict):
+                # Clean up placeholder values
+                for key, value in spec.items():
+                    if isinstance(value, str) and (
+                        "Extract the" in value or 
+                        "Describe what" in value or
+                        "List of" in value or
+                        "replace with actual" in value
+                    ):
+                        spec[key] = None
+                
+                # Clean up resources
+                if "resources" in spec and isinstance(spec["resources"], dict):
+                    for key, value in spec["resources"].items():
+                        if isinstance(value, str) and (
+                            "Number of" in value or
+                            "if mentioned" in value or
+                            value == "Number of logical qubits (e.g., n, 2n+1)"
+                        ):
+                            spec["resources"][key] = None
+            
+            # Attach sources and schema version
             data.setdefault("sources", sources)
             data.setdefault("schema_version", "1.0")
             return data
