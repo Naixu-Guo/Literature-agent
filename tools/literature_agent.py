@@ -316,10 +316,14 @@ def web_research(query: str, num_results: int = 5) -> str:
             if load_result.get("success"):
                 doc_id = load_result["doc_id"]
                 
-                # Try to generate summary (may fail if API key expired)
-                summary_result = _agent.summarize(doc_id, max_length=300)
+                # Generate brief summary (1-2 sentences) for quick overview
+                summary_result = _agent.summarize(doc_id, max_length=100)
                 
-                summary = "Summary unavailable (API issue)" if summary_result.get("error") else summary_result.get("summary", "No summary generated")
+                # Use snippet as fallback if summary fails
+                if summary_result.get("error"):
+                    summary = snippet[:150] + "..." if snippet else "Document loaded successfully"
+                else:
+                    summary = summary_result.get("summary", "")[:200]  # Limit to 200 chars
                 
                 results.append({
                     "title": title,
@@ -344,15 +348,13 @@ def web_research(query: str, num_results: int = 5) -> str:
             output += f"**Successfully loaded {len(results)} document(s):**\n\n"
             for i, result in enumerate(results, 1):
                 output += f"**{i}. {result['title']}**\n"
-                output += f"URL: {result['url']}\n"
                 if result.get('original_url'):
-                    output += f"Original URL (auth required): {result['original_url']}\n"
-                    output += f"✅ Found arXiv alternative!\n"
-                if result['snippet']:
-                    output += f"Snippet: {result['snippet'][:200]}...\n"
-                output += f"Summary: {result['summary']}\n"
-                output += f"Document ID: {result['doc_id']}\n"
-                output += "-" * 50 + "\n"
+                    output += f"✅ arXiv: {result['url']}\n"
+                    output += f"(Original: {result['original_url']})\n"
+                else:
+                    output += f"URL: {result['url']}\n"
+                output += f"Brief: {result['summary']}\n"
+                output += f"ID: {result['doc_id']}\n\n"
         
         if failed_loads:
             output += f"\n**Failed to load {len(failed_loads)} document(s):**\n"
