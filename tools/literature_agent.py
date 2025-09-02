@@ -4,6 +4,7 @@ All functions use the MCP backend for optimal performance and consistency
 """
 
 import os
+import json
 from typing import Optional, Union, List
 from dotenv import load_dotenv
 
@@ -12,6 +13,156 @@ load_dotenv()
 
 from tools.toolset import toolset
 from tools.mcp_backend import _agent
+
+
+def _auto_optimize_num_results(query: str) -> int:
+    """
+    Automatically optimize num_results based on query complexity and corpus size.
+    
+    :param query: the search query
+    :return: optimized number of results
+    """
+    try:
+        # Get corpus size
+        corpus_size = len(_agent.documents)
+        
+        # Analyze query complexity
+        query_words = len(query.split())
+        has_complex_terms = any(term in query.lower() for term in [
+            'compare', 'contrast', 'difference', 'relationship', 'how', 'why', 
+            'explain', 'analyze', 'comprehensive', 'detailed', 'multiple', 'various'
+        ])
+        
+        # Base calculation
+        if query_words < 5:
+            base_results = 3  # Simple queries
+        elif query_words < 10:
+            base_results = 5  # Medium queries  
+        else:
+            base_results = 7  # Complex queries
+            
+        # Adjust for complex terms
+        if has_complex_terms:
+            base_results += 2
+            
+        # Scale with corpus size
+        if corpus_size > 50:
+            base_results += 2
+        elif corpus_size > 20:
+            base_results += 1
+            
+        # Cap the results
+        return min(max(base_results, 3), 12)  # Between 3-12
+        
+    except Exception:
+        return 5  # Safe fallback
+
+
+def _enhanced_search(query: str, num_results: int) -> dict:
+    """
+    Enhanced search that prioritizes content-rich chunks over references/bibliography.
+    
+    :param query: search query
+    :param num_results: number of results to return
+    :return: search results dictionary
+    """
+    try:
+        # Get more results than needed for filtering
+        expanded_results = _agent.search(query, num_results=num_results * 2)
+        
+        if "error" in expanded_results:
+            return expanded_results
+            
+        all_results = expanded_results.get("results", [])
+        
+        # Score and filter results
+        scored_results = []
+        for result in all_results:
+            chunk_id = result.get("chunk_id", 0)
+            doc_id = result.get("doc_id", "")
+            content = result.get("content", "")
+            
+            # Get total chunks for this document  
+            doc = _agent.documents.get(doc_id, {})
+            total_chunks = len(doc.get("chunks", []))
+            
+            # Calculate content quality score
+            score = _calculate_content_score(content, chunk_id, total_chunks)
+            
+            scored_results.append({
+                **result,
+                "content_score": score
+            })
+        
+        # Sort by content quality, then by similarity score
+        scored_results.sort(key=lambda x: (x["content_score"], -x["score"]), reverse=True)
+        
+        # Return top results
+        filtered_results = scored_results[:num_results]
+        
+        return {
+            "query": query,
+            "num_results": len(filtered_results),
+            "results": filtered_results
+        }
+        
+    except Exception as e:
+        # Fallback to regular search
+        return _agent.search(query, num_results)
+
+
+def _calculate_content_score(content: str, chunk_id: int, total_chunks: int) -> float:
+    """
+    Calculate content quality score to prioritize substantive content.
+    
+    :param content: chunk content
+    :param chunk_id: position of chunk in document
+    :param total_chunks: total chunks in document
+    :return: content quality score (0-1)
+    """
+    score = 0.0
+    
+    # Position scoring: early chunks are more valuable
+    position_ratio = chunk_id / max(total_chunks, 1)
+    if position_ratio < 0.3:  # First 30% of document
+        score += 0.4
+    elif position_ratio < 0.6:  # Middle 30%
+        score += 0.2
+    else:  # Last 40% (likely references)
+        score -= 0.2
+    
+    # Content quality indicators
+    content_lower = content.lower()
+    
+    # Positive indicators (substantive content)
+    positive_terms = [
+        'algorithm', 'method', 'approach', 'result', 'experiment', 'analysis',
+        'propose', 'introduce', 'demonstrate', 'prove', 'show', 'find',
+        'conclusion', 'contribution', 'novel', 'technique', 'performance',
+        'implementation', 'solution', 'framework', 'model', 'theory'
+    ]
+    
+    # Negative indicators (references/metadata)
+    negative_terms = [
+        'et al', 'bibliography', 'references', 'doi:', 'arxiv:', 'isbn',
+        'proceedings', 'conference', 'journal', 'volume', 'pages',
+        'publisher', 'citation', 'cited', 'reference'
+    ]
+    
+    # Score based on content indicators
+    positive_count = sum(1 for term in positive_terms if term in content_lower)
+    negative_count = sum(1 for term in negative_terms if term in content_lower)
+    
+    score += min(positive_count * 0.05, 0.3)  # Max +0.3
+    score -= min(negative_count * 0.1, 0.4)   # Max -0.4
+    
+    # Length bonus for substantial content
+    if len(content) > 500:
+        score += 0.1
+    elif len(content) < 100:
+        score -= 0.1
+    
+    return max(0.0, min(1.0, score))  # Clamp to 0-1
 
 
 def _get_early_chunks(doc_id: str, max_chunks: int = 5) -> List[str]:
@@ -150,59 +301,224 @@ Integrated summary:"""
 
 
 @toolset.add()
-def query_documents(query: str, num_results: int = 5) -> str:
+def query_documents(query: str, mode: str = "algorithm_spec", num_results: int = -1) -> str:
     """
-    Query documents and get the best answer combining AI analysis with direct quotes.
-    Automatically provides comprehensive AI-generated response enhanced with key excerpts.
-    
-    :param query: search query or question
-    :param num_results: number of results/sources to use (default: 5)
-    :return: comprehensive answer with AI analysis and direct quotes
+    Query documents with a focus on producing a high-quality, structured description of
+    quantum algorithms suited for downstream resource estimation.
+
+    - mode="algorithm_spec" (default): returns strict JSON string per schema
+    - mode="answer": returns a concise textual answer with simple source list
     """
     try:
-        # Get search results for direct quotes
-        search_result = _agent.search(query, num_results=num_results)
-        excerpts = search_result.get("results", []) if "error" not in search_result else []
-        
-        # Get AI-generated answer
-        rag_result = _agent.ask_question(query, num_sources=num_results)
-        
-        if "error" in rag_result:
-            return f"Error: {rag_result['error']}"
-        
-        ai_answer = rag_result.get("answer", "No answer available")
-        sources = rag_result.get("sources", [])
-        
-        # Build comprehensive response
-        response = f"{ai_answer}\n"
-        
-        # Add key excerpts if available
-        if excerpts:
-            response += f"\n**Key Excerpts:**\n"
-            for i, excerpt in enumerate(excerpts[:3], 1):  # Top 3 most relevant
-                # Extract content from the dictionary result
-                if isinstance(excerpt, dict):
-                    content = excerpt.get("content", str(excerpt))
-                    doc_title = excerpt.get("document_title", "Unknown")
-                    clean_excerpt = content.strip() if isinstance(content, str) else str(content)
-                else:
-                    clean_excerpt = str(excerpt).strip()
-                    doc_title = "Unknown"
-                
-                if len(clean_excerpt) > 250:
-                    clean_excerpt = clean_excerpt[:250] + "..."
-                response += f"{i}. \"{clean_excerpt}\" _(from {doc_title})_\n\n"
-        
-        # Add sources
-        if sources:
-            response += "**Sources:**\n"
-            for i, source in enumerate(sources, 1):
-                response += f"{i}. {source}\n"
-        
-        return response
-        
+        # Auto-optimize num_results if requested
+        if num_results == -1:
+            num_results = _auto_optimize_num_results(query)
+
+        if mode == "algorithm_spec":
+            result = _agent.extract_algorithm_spec(query, num_sources=num_results)
+            if "error" in result:
+                return f"Error: {result['error']}"
+            return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+
+        if mode == "answer":
+            rag = _agent.ask_question(query, num_sources=num_results)
+            if "error" in rag:
+                return f"Error: {rag['error']}"
+            answer = rag.get("answer", "No answer available")
+            sources = rag.get("sources", [])
+            # Minimal, clean formatting
+            resp = answer.strip() + "\n"
+            if sources:
+                resp += "\nSources:\n" + "\n".join(
+                    f"- {s.get('document','Unknown')} (doc {s.get('doc_id')}, chunk {s.get('chunk_id')})" for s in sources
+                )
+            return resp
+
+        return "Error: Invalid mode. Use 'algorithm_spec' or 'answer'."
+
     except Exception as e:
         return f"Error: {str(e)}"
+
+
+def _enhanced_rag_answer(query: str, excerpts: List[dict]) -> dict:
+    """
+    Generate enhanced AI answer with better prompting and context awareness.
+    
+    :param query: the search query
+    :param excerpts: search result excerpts
+    :return: enhanced RAG result
+    """
+    try:
+        llm = _agent._get_llm()
+        if not llm:
+            return {"error": "LLM not available. Please set GOOGLE_API_KEY."}
+        
+        if not excerpts:
+            return {
+                "answer": "No relevant information found in the document corpus.",
+                "sources": []
+            }
+        
+        # Build context with source attribution (limit context size for API safety)
+        context_parts = []
+        sources = []
+        max_context_length = 8000  # Safe limit for API calls
+        current_length = 0
+        
+        for i, excerpt in enumerate(excerpts):
+            doc_title = excerpt.get("document_title", "Unknown Document")[:200]  # Limit title length
+            content = excerpt.get("content", "")[:1000]  # Limit content length
+            
+            # Check if adding this excerpt would exceed the limit
+            excerpt_text = f"[Source {i+1}: {doc_title}]\n{content}\n"
+            if current_length + len(excerpt_text) > max_context_length:
+                break
+                
+            context_parts.append(excerpt_text)
+            sources.append(doc_title)
+            current_length += len(excerpt_text)
+        
+        if not context_parts:
+            return {
+                "answer": "Content too large to process safely.",
+                "sources": []
+            }
+        
+        context = "\n".join(context_parts)
+        
+        # Enhanced prompt for better answer quality
+        prompt = f"""Based on the provided research excerpts, answer the question with academic rigor.
+
+Instructions:
+- Provide a comprehensive, well-structured answer
+- Cite specific findings and evidence from the sources
+- Use academic tone but remain accessible
+- If information is incomplete, clearly state limitations
+
+Context from {len(context_parts)} research excerpts:
+{context}
+
+Question: {query[:500]}  
+
+Answer:"""
+        
+        response = llm.invoke(prompt)
+        answer = response.content if hasattr(response, 'content') else str(response)
+        
+        return {
+            "answer": answer,
+            "sources": sources
+        }
+        
+    except Exception as e:
+        return {"error": f"Answer generation failed: {str(e)}"}
+
+
+def _curate_excerpts(excerpts: List[dict], query: str, max_excerpts: int = 3) -> List[dict]:
+    """
+    Select and format high-quality, diverse excerpts for display.
+    
+    :param excerpts: search result excerpts
+    :param query: original query for relevance scoring  
+    :param max_excerpts: maximum number of excerpts to return
+    :return: list of curated excerpt information
+    """
+    if not excerpts:
+        return []
+    
+    try:
+        # Simple scoring and selection for API safety
+        scored_excerpts = []
+        seen_docs = set()
+        
+        for excerpt in excerpts:
+            doc_id = excerpt.get("doc_id", "")
+            doc_title = excerpt.get("document_title", "Unknown")[:100]  # Limit title length
+            content = excerpt.get("content", "")[:400]  # Limit content length
+            similarity_score = float(excerpt.get("score", 0.0))
+            
+            # Simple relevance check
+            query_words = set(word.lower() for word in query.split() if len(word) > 2)
+            content_words = set(word.lower() for word in content.split() if len(word) > 2)
+            relevance = len(query_words.intersection(content_words)) / max(len(query_words), 1)
+            
+            # Diversity bonus for new documents
+            diversity_bonus = 0.3 if doc_id not in seen_docs else 0.0
+            seen_docs.add(doc_id)
+            
+            # Combined score
+            combined_score = similarity_score + relevance + diversity_bonus
+            
+            scored_excerpts.append({
+                "doc_title": doc_title,
+                "content": content,
+                "score": combined_score
+            })
+        
+        # Sort and select top excerpts
+        scored_excerpts.sort(key=lambda x: x["score"], reverse=True)
+        selected = scored_excerpts[:max_excerpts]
+        
+        # Format for display with safe truncation
+        curated = []
+        for item in selected:
+            content = item["content"]
+            doc_title = item["doc_title"]
+            
+            # Safe truncation
+            if len(content) > 250:
+                content = content[:247] + "..."
+            
+            curated.append({
+                "formatted_excerpt": f'*"{content}"* — {doc_title}'
+            })
+        
+        return curated
+        
+    except Exception:
+        # Simple fallback formatting
+        return [{
+            "formatted_excerpt": f'*"{excerpt.get("content", "")[:200]}..."* — {excerpt.get("document_title", "Unknown")[:50]}'
+        } for excerpt in excerpts[:max_excerpts]]
+
+
+def _clean_sources(sources: List[str]) -> List[str]:
+    """
+    Clean and deduplicate source citations for better presentation.
+    
+    :param sources: list of source strings
+    :return: cleaned and deduplicated source list
+    """
+    if not sources:
+        return []
+    
+    try:
+        # Simple deduplication and cleaning
+        seen = set()
+        cleaned = []
+        
+        for source in sources:
+            if not source or not source.strip():
+                continue
+                
+            # Basic cleaning - limit length and remove IDs
+            clean_source = source.strip()[:150]  # Limit length for API safety
+            
+            # Remove ID patterns
+            if " (ID:" in clean_source:
+                clean_source = clean_source.split(" (ID:")[0]
+            
+            # Avoid duplicates
+            source_key = clean_source.lower()
+            if source_key not in seen and len(clean_source) > 5:
+                seen.add(source_key)
+                cleaned.append(clean_source)
+        
+        return cleaned[:10]  # Limit to 10 sources for API safety
+        
+    except Exception:
+        # Simple fallback
+        return list(set(str(s)[:100] for s in sources if s))[:5]
 
 
 def _find_arxiv_alternative(title: str, snippet: str, original_url: str) -> Optional[str]:

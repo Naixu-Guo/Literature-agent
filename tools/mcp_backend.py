@@ -3,7 +3,7 @@ Simple MCP Integration for Literature Agent
 Provides MCP functionality without complex async handling
 """
 
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import os
 import json
 import hashlib
@@ -430,6 +430,125 @@ class SimpleMCPLiteratureAgent:
             
         except Exception as e:
             return {"error": f"Question answering failed: {str(e)}"}
+
+    def extract_algorithm_spec(self, query: str, doc_ids: Optional[List[str]] = None, num_sources: int = 5) -> Dict[str, Any]:
+        """Extract a structured quantum algorithm specification suitable for resource estimation.
+
+        Returns a dict with keys: algorithm_spec (object), sources (list), and schema_version.
+        """
+        llm = self._get_llm()
+        if not llm:
+            return {"error": "LLM not available. Please set GOOGLE_API_KEY."}
+
+        try:
+            search_result = self.search(query, num_sources, doc_ids)
+            if "error" in search_result:
+                return search_result
+
+            results = search_result.get("results", [])
+            if not results:
+                return {"error": "No relevant context found to extract algorithm specification"}
+
+            context_parts: List[str] = []
+            sources: List[Dict[str, Any]] = []
+            for res in results:
+                context_parts.append(
+                    f"[Source: {res['document_title']} | doc_id={res['doc_id']} | chunk={res['chunk_id']}]\n{res['content']}\n"
+                )
+                sources.append({
+                    "document": res["document_title"],
+                    "doc_id": res["doc_id"],
+                    "chunk_id": res["chunk_id"]
+                })
+
+            context = "\n".join(context_parts)
+
+            schema = {
+                "schema_version": "1.0",
+                "algorithm_spec": {
+                    "algorithm_name": None,
+                    "problem_description": None,
+                    "input_parameters": {},
+                    "computational_model": {
+                        "gate_set": None,
+                        "oracle_model": None,
+                        "precision": None,
+                        "error_correction": {
+                            "code": None,
+                            "code_distance": None
+                        }
+                    },
+                    "resources": {
+                        "logical_qubits": None,
+                        "ancilla_qubits": None,
+                        "t_count": None,
+                        "t_depth": None,
+                        "toffoli_count": None,
+                        "cnot_count": None,
+                        "depth": None,
+                        "runtime_complexity": None,
+                        "space_complexity": None
+                    },
+                    "subroutines": [],
+                    "algorithm_steps": [],
+                    "assumptions": [],
+                    "success_probability": None,
+                    "caveats": [],
+                    "confidence": None
+                }
+            }
+
+            instruction = (
+                "You are extracting a structured quantum algorithm specification strictly from the provided context. "
+                "Return ONLY a single JSON object matching exactly the following schema. Use null for any unknown fields. "
+                "Do not guess numeric resource counts; set them to null unless explicitly supported by the text. "
+                "Use concise, unambiguous language suitable for downstream resource estimation. No markdown, no extra text."
+            )
+
+            prompt = f"""
+{instruction}
+
+SCHEMA:
+{json.dumps(schema, indent=2)}
+
+CONTEXT:
+{context}
+
+QUERY:
+{query}
+
+OUTPUT:
+"""
+
+            response = llm.invoke(prompt)
+            raw = response.content if hasattr(response, "content") else str(response)
+
+            # Try to parse JSON strictly
+            try:
+                data = json.loads(raw)
+            except Exception:
+                # Attempt to salvage JSON by finding first/last braces
+                start = raw.find('{')
+                end = raw.rfind('}')
+                if start != -1 and end != -1 and end > start:
+                    try:
+                        data = json.loads(raw[start:end+1])
+                    except Exception as parse_err:
+                        return {"error": f"Model did not return valid JSON: {parse_err}"}
+                else:
+                    return {"error": "Model did not return JSON"}
+
+            # Minimal validation
+            if not isinstance(data, dict) or "algorithm_spec" not in data:
+                return {"error": "JSON missing 'algorithm_spec' object"}
+
+            # Attach sources if not present
+            data.setdefault("sources", sources)
+            data.setdefault("schema_version", "1.0")
+            return data
+
+        except Exception as e:
+            return {"error": f"Algorithm spec extraction failed: {str(e)}"}
     
     def list_documents(self) -> dict:
         """List all documents"""
