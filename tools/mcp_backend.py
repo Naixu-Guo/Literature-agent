@@ -592,87 +592,156 @@ class SimpleMCPLiteratureAgent:
 
             context = "\n".join(context_parts)
 
-            # Enhanced instruction for comprehensive extraction
-            instruction = """You are a quantum computing expert tasked with extracting COMPREHENSIVE algorithm specifications for quantum resource estimation.
+            # Enhanced instruction for ultra-detailed extraction
+            instruction = """You are a world-class quantum computing expert and technical writer tasked with extracting COMPREHENSIVE, DETAILED algorithm specifications for quantum resource estimation and implementation.
 
-Your task is to analyze research papers and extract DETAILED information about quantum algorithms. Fill in as much information as possible based on the context provided.
+Your mission is to create the most thorough, detailed, and useful algorithm description possible from research papers. Provide exhaustive detail that would allow someone to implement and analyze the algorithm.
 
-EXTRACTION GUIDELINES:
-1. **Algorithm Name**: Extract the main algorithm name (e.g., "Quantum Phase Estimation", "Grover's Algorithm", "HHL Algorithm")
-2. **Problem Description**: What problem does this algorithm solve? Be specific about inputs and outputs.
-3. **Input Parameters**: List ALL input parameters with types and descriptions (e.g., "n: number of qubits", "epsilon: precision parameter")
-4. **Resources**: Extract or estimate ALL resource requirements:
-   - If paper says "uses n qubits", extract as logical_qubits: "n"
-   - If paper mentions "O(log(1/ε)) ancilla qubits", extract as ancilla_qubits: "O(log(1/ε))"
-   - Include gate counts, circuit depth, runtime complexity
-5. **Algorithm Steps**: Break down the algorithm into numbered steps based on the paper's description
-6. **Key Techniques**: List quantum techniques used (QSVT, QPE, amplitude amplification, etc.)
-7. **Subroutines**: List any quantum subroutines called (e.g., "Quantum Fourier Transform", "Controlled rotations")
-8. **Success Probability & Error Bounds**: Extract probability of success and error analysis
-9. **Applications**: List practical applications mentioned
+EXTRACTION GUIDELINES FOR MAXIMUM DETAIL:
 
-IMPORTANT: 
-- Extract information even if it requires reasonable inference from technical descriptions
-- Use mathematical notation when appropriate (e.g., O(n), O(log n), 2^n)
-- Include both explicit values AND complexity expressions
-- If information is partial, include what's available rather than leaving null
-- For the QUERY provided, focus on finding the most relevant algorithm information
+1. **Algorithm Name**: Full formal name and common abbreviations
 
-Return a complete JSON object matching the schema provided."""
+2. **Problem Description**: DETAILED problem statement including:
+   - Mathematical formulation (equations, constraints)
+   - Classical complexity of the problem
+   - Why quantum advantage exists
+   - Specific input/output relationships
 
-            # Build the full schema with better defaults
+3. **Input Parameters**: Comprehensive parameter analysis:
+   - Parameter name, symbol, type, range, physical meaning
+   - Dependencies between parameters
+   - How parameters affect resource requirements
+
+4. **Algorithm Steps**: EXTREMELY DETAILED step-by-step breakdown:
+   - For each step, provide: PURPOSE, IMPLEMENTATION, CRITICAL ASPECTS
+   - Include mathematical operations performed
+   - Explain quantum mechanical principles involved
+   - Highlight where quantum advantage comes from
+   - Describe measurement procedures and outcomes
+   - Note error propagation and correction needs
+
+5. **Resource Requirements**: Exhaustive resource analysis:
+   - Derive formulas from paper content, don't just copy
+   - Explain scaling with problem size
+   - Break down into components (e.g., "n qubits for state + log(κ/ε) for phase estimation")
+   - Include both leading-order and constant factors when available
+
+6. **Key Techniques & Subroutines**: Detailed technical analysis:
+   - Explain HOW each technique works in this context
+   - Why these techniques are chosen
+   - Alternatives and trade-offs
+
+7. **Critical Complexity Analysis**:
+   - Time complexity derivation and explanation
+   - Space complexity breakdown
+   - Comparison with classical approaches
+   - Bottlenecks and limiting factors
+
+8. **Implementation Considerations**:
+   - Hardware requirements
+   - Error rates and fault tolerance needs  
+   - Practical limitations and challenges
+
+9. **Success Probability & Error Analysis**:
+   - Detailed error model
+   - How errors propagate through the algorithm
+   - Success probability derivation
+   - Error mitigation strategies
+
+CRITICAL FORMATTING REQUIREMENTS:
+- Use detailed explanations, not just brief statements
+- Include mathematical derivations where possible
+- Highlight critical insights with detailed explanations
+- For algorithm steps, each step should be 2-3 detailed sentences minimum
+- Explain the "why" behind each design choice
+- Include implementation challenges and solutions
+
+Focus on creating a comprehensive technical reference that maximizes understanding and practical utility."""
+
+            # Enhanced schema for ultra-detailed extraction
             schema = {
                 "algorithm_spec": {
-                    "algorithm_name": "Extract the algorithm name from context",
-                    "problem_description": "Describe what problem this algorithm solves",
+                    "algorithm_name": "Full formal name and abbreviations of the algorithm",
+                    "problem_description": "COMPREHENSIVE problem description including mathematical formulation, classical complexity, quantum advantage, and input/output relationships. Should be 3-5 detailed sentences.",
                     "input_parameters": {
-                        "example_param": "Description of parameter (replace with actual)"
+                        "parameter_name": "Detailed description including symbol, type, range, physical meaning, and how it affects resources"
                     },
-                    "output": "Describe the output of the algorithm",
+                    "output": "Detailed description of algorithm output, format, and interpretation",
                     "computational_model": {
-                        "gate_set": "Standard gate set used (e.g., Clifford+T)",
-                        "oracle_model": "Oracle access model if applicable",
-                        "precision": "Precision requirements (e.g., ε for approximation)",
-                        "error_correction": "Error correction requirements if mentioned"
+                        "gate_set": "Specific quantum gate set required with justification",
+                        "oracle_model": "Detailed oracle access model, query complexity, and implementation requirements",
+                        "precision": "Precision requirements with mathematical formulation and impact on resources",
+                        "error_correction": "Error correction requirements, fault tolerance needs, and error thresholds"
                     },
                     "resources": {
-                        "logical_qubits": "Number of logical qubits (e.g., n, 2n+1)",
-                        "ancilla_qubits": "Number of ancilla qubits",
-                        "t_count": "Number of T gates if mentioned",
-                        "t_depth": "T-depth if mentioned",
-                        "toffoli_count": "Number of Toffoli gates",
-                        "cnot_count": "Number of CNOT gates",
-                        "total_gates": "Total gate count or complexity",
-                        "circuit_depth": "Circuit depth or complexity",
-                        "runtime_complexity": "Time complexity (e.g., O(n^2))",
-                        "space_complexity": "Space complexity",
-                        "query_complexity": "Oracle query complexity if applicable"
+                        "logical_qubits": "Detailed qubit count derivation with breakdown by components (e.g., 'n qubits for input state + log(κ/ε) for phase register + O(1) ancilla')",
+                        "ancilla_qubits": "Ancilla qubit requirements with detailed explanation of purpose and scaling",
+                        "t_count": "T gate count with derivation and explanation of sources",
+                        "t_depth": "T-depth analysis including parallelization considerations",
+                        "toffoli_count": "Toffoli gate requirements with detailed breakdown",
+                        "cnot_count": "CNOT gate count and depth analysis",
+                        "total_gates": "Total gate complexity with detailed scaling analysis",
+                        "circuit_depth": "Circuit depth with critical path analysis",
+                        "runtime_complexity": "Detailed time complexity derivation with comparison to classical approaches",
+                        "space_complexity": "Space requirements with detailed breakdown",
+                        "query_complexity": "Oracle query complexity with detailed analysis"
                     },
-                    "subroutines": ["List of quantum subroutines used"],
-                    "algorithm_steps": ["Step 1: Initialize...", "Step 2: Apply..."],
-                    "key_techniques": ["Quantum techniques used"],
-                    "assumptions": ["Key assumptions made"],
-                    "success_probability": "Success probability (e.g., 2/3, 1-ε)",
-                    "error_bounds": "Error analysis or bounds",
-                    "applications": ["Practical applications mentioned"]
+                    "algorithm_steps": [
+                        "DETAILED Step 1: [PURPOSE] Detailed description of initialization phase including quantum state preparation, register setup, and critical implementation considerations. [CRITICAL ASPECT] Highlight where quantum advantage begins.",
+                        "DETAILED Step 2: [PURPOSE] Comprehensive description of main algorithmic operations including mathematical transformations, quantum mechanical principles, and measurement procedures. [CRITICAL ASPECT] Explain error propagation."
+                    ],
+                    "subroutines": [
+                        "Subroutine Name: Detailed description of purpose, implementation, complexity, and role in overall algorithm"
+                    ],
+                    "key_techniques": [
+                        "Technique Name: DETAILED explanation of how this technique works in context, why it's chosen, alternatives considered, and trade-offs"
+                    ],
+                    "critical_complexity_analysis": {
+                        "time_complexity_derivation": "Step-by-step derivation of time complexity with mathematical justification",
+                        "space_complexity_breakdown": "Detailed space requirement analysis with component breakdown",
+                        "classical_comparison": "Detailed comparison with best classical algorithms including speedup analysis",
+                        "bottlenecks_and_limitations": "Critical bottlenecks, limiting factors, and scalability challenges"
+                    },
+                    "implementation_considerations": {
+                        "hardware_requirements": "Specific hardware needs, connectivity requirements, and physical constraints",
+                        "error_tolerance": "Error rate requirements and fault tolerance analysis",
+                        "practical_challenges": "Real implementation challenges and proposed solutions"
+                    },
+                    "assumptions": ["Detailed assumptions with justification and impact if assumptions don't hold"],
+                    "success_probability": "Detailed success probability analysis with derivation and parameter dependence",
+                    "error_analysis": {
+                        "error_model": "Comprehensive error model including all error sources",
+                        "error_propagation": "How errors propagate through the algorithm",
+                        "mitigation_strategies": "Error mitigation and correction strategies"
+                    },
+                    "applications": ["Practical applications with detailed use cases and impact assessment"]
                 }
             }
 
-            # Use maximum context for quality (up to 20k chars for better coverage)
-            max_context = min(len(context), 20000)
+            # Use maximum context for ultra-detailed extraction (up to 30k chars)
+            max_context = min(len(context), 30000)
             prompt = f"""{instruction}
 
-QUERY: {query}
+TARGET QUERY: {query}
 
-CONTEXT FROM RESEARCH PAPERS:
+COMPREHENSIVE RESEARCH PAPER CONTEXT:
 {context[:max_context]}
 
-REQUIRED OUTPUT SCHEMA:
+REQUIRED DETAILED OUTPUT SCHEMA:
 {json.dumps(schema, indent=2)}
 
-Please extract comprehensive algorithm information from the context above and return ONLY a valid JSON object following the schema. Focus on the algorithm most relevant to the query: "{query}"
+EXTRACTION INSTRUCTIONS:
+1. Focus on the quantum algorithm most relevant to the query: "{query}"
+2. Extract MAXIMUM detail from the provided context
+3. For each field, provide comprehensive explanations (2-3 sentences minimum)
+4. Include mathematical formulations and derivations where available
+5. Highlight critical aspects and implementation challenges
+6. Explain the quantum advantage and complexity comparisons
+7. Provide step-by-step breakdowns with PURPOSE and CRITICAL ASPECTS
 
-JSON OUTPUT:"""
+IMPORTANT: Return ONLY a valid JSON object. Make every field as detailed and comprehensive as possible based on the research paper context provided.
+
+ULTRA-DETAILED JSON OUTPUT:"""
 
             response = llm.invoke(prompt)
             raw = response.content if hasattr(response, "content") else str(response)

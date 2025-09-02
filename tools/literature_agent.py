@@ -16,38 +16,42 @@ from tools.mcp_backend import _agent
 
 
 def _auto_optimize_num_results(query: str) -> int:
-    """Auto-optimize num_results for maximum quality algorithm extraction."""
+    """Auto-optimize num_results for maximum quality algorithm extraction with detailed output."""
     try:
         query_words = len(query.split())
         corpus_size = len(_agent.documents)
         query_lower = query.lower()
         
-        # Start with higher base for better coverage
+        # Start with higher base for ultra-detailed extraction
         if query_words < 5:
-            base = 5  # Simple queries still need context
+            base = 8  # Even simple queries need comprehensive context
         elif query_words < 10:
-            base = 7  # Medium queries
+            base = 12  # Medium queries
         else:
-            base = 10  # Complex queries need more context
+            base = 15  # Complex queries need extensive context
         
-        # Boost for algorithm-specific queries
+        # Strong boost for algorithm-specific queries requiring detail
         if any(t in query_lower for t in ['algorithm', 'quantum', 'resource', 'complexity']):
-            base += 3
+            base += 5
         
-        # Boost for analysis queries
-        if any(t in query_lower for t in ['compare', 'analyze', 'explain', 'detail', 'comprehensive']):
-            base += 2
-            
-        # Scale with corpus size
-        if corpus_size > 50:
+        # Strong boost for detailed analysis queries
+        if any(t in query_lower for t in ['compare', 'analyze', 'explain', 'detail', 'comprehensive', 'implementation', 'specification']):
+            base += 4
+        
+        # Additional boost for critical algorithm terms
+        if any(t in query_lower for t in ['steps', 'detailed', 'critical', 'thorough', 'complete']):
             base += 3
-        elif corpus_size > 20:
-            base += 2
             
-        # Higher ceiling for quality
-        return min(max(base, 5), 20)  # 5-20 results for comprehensive coverage
+        # Scale with corpus size for better coverage
+        if corpus_size > 50:
+            base += 4
+        elif corpus_size > 20:
+            base += 3
+            
+        # Much higher ceiling for ultra-detailed extraction
+        return min(max(base, 8), 25)  # 8-25 results for ultra-comprehensive coverage
     except Exception:
-        return 8  # Higher default for quality
+        return 15  # Higher default for detailed quality
 
 
 
@@ -174,10 +178,10 @@ def query_documents(query: str, mode: str = "algorithm_spec", num_results: int =
         
         query = query.strip()[:500]  # Limit query length
         
-        # Auto-optimize num_results for quality
+        # Auto-optimize num_results for maximum detail extraction
         if num_results == -1:
             num_results = _auto_optimize_num_results(query)
-        num_results = max(1, min(num_results, 20))  # Allow up to 20 for comprehensive extraction
+        num_results = max(1, min(num_results, 25))  # Allow up to 25 for ultra-detailed extraction
 
         if mode == "algorithm_spec":
             result = _agent.extract_algorithm_spec(query, num_sources=num_results)
