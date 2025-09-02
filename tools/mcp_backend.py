@@ -421,24 +421,46 @@ class SimpleMCPLiteratureAgent:
                     "variational", "qaoa", "vqe", "adiabatic", "annealing"
                 ]
                 
-                # Check for strong matches in content or query terms
-                strong_match = (
-                    title_keyword_matches >= 2 or 
-                    content_keyword_matches >= 2 or
-                    any(term in doc_title or term in content_sample for term in specific_algorithms) or
-                    # Check if any query keywords strongly match document content
-                    any(keyword in content_sample and len(keyword) > 3 for keyword in query_keywords)
+                # ENHANCED: Much stronger prioritization for exact algorithmic matches
+                
+                # Check for EXACT algorithm matches (highest priority)
+                exact_algorithm_match = False
+                for keyword in query_keywords:
+                    if len(keyword) > 3 and keyword in content_sample:
+                        # Strong match for algorithm names
+                        if keyword in ['shor', 'grover', 'variational', 'qaoa', 'eigensolver', 'factoring', 'search']:
+                            exact_algorithm_match = True
+                            break
+                
+                # Check for algorithm-specific term matches
+                algorithm_specific_match = any(term in content_sample for term in specific_algorithms)
+                
+                # Check for strong query-content alignment  
+                strong_content_match = (
+                    content_keyword_matches >= 3 or  # Strong keyword overlap
+                    any(keyword in content_sample and len(keyword) > 4 for keyword in query_keywords) or
+                    # Check for abbreviation matches (VQE, QPE, HHL, etc.)
+                    any(kw.upper() in content_sample.upper() for kw in query_keywords if len(kw) <= 4)
                 )
                 
-                if strong_match:
+                # Enhanced title matching
+                strong_title_match = (
+                    title_keyword_matches >= 2 or
+                    any(term in doc_title for term in specific_algorithms)
+                )
+                
+                # Classify with much stronger exact matching
+                if exact_algorithm_match or (algorithm_specific_match and strong_content_match):
                     high_priority_docs.append(doc_id)
+                elif strong_title_match or strong_content_match or algorithm_specific_match:
+                    high_priority_docs.append(doc_id)  # More docs get high priority
                 elif any(term in doc_title or term in content_sample for term in ["quantum", "algorithm"]):
                     medium_priority_docs.append(doc_id)
                 else:
                     low_priority_docs.append(doc_id)
             
-            # Search prioritized document groups with stronger boost for high priority
-            for priority_group, boost in [(high_priority_docs, 1.5), (medium_priority_docs, 0.5), (low_priority_docs, 0.0)]:
+            # Search prioritized document groups with enhanced boosting
+            for priority_group, boost in [(high_priority_docs, 1.8), (medium_priority_docs, 0.6), (low_priority_docs, 0.0)]:
                 for doc_id in priority_group:
                     vector_store = self.vector_stores[doc_id]
                     results = vector_store.similarity_search_with_score(query, k=min(num_results, 5))
@@ -446,6 +468,30 @@ class SimpleMCPLiteratureAgent:
                     for doc, score in results:
                         # Apply priority boost
                         adjusted_score = float(score) - boost
+                        
+                        # ADDITIONAL BOOST: Recently loaded documents get extra priority
+                        doc_info = self.documents.get(doc_id, {})
+                        created_at = doc_info.get("created_at", "")
+                        
+                        # Check if document was created recently (within current session)
+                        from datetime import datetime, timedelta
+                        try:
+                            if created_at:
+                                doc_time = datetime.fromisoformat(created_at.replace('Z', '+00:00') if 'Z' in created_at else created_at)
+                                current_time = datetime.now()
+                                if current_time - doc_time < timedelta(hours=1):  # Recently loaded
+                                    # Check if this recent document strongly matches the query
+                                    content_lower = doc.page_content.lower()
+                                    query_lower = query.lower()
+                                    query_terms = query_lower.split()
+                                    
+                                    # Strong recent document boost if it matches query well
+                                    recent_match_score = sum(1 for term in query_terms 
+                                                           if len(term) > 3 and term in content_lower)
+                                    if recent_match_score >= 2:  # Strong match in recent document
+                                        adjusted_score -= 0.8  # Extra boost for relevant recent docs
+                        except Exception:
+                            pass  # Skip recent document boost if parsing fails
                         
                         all_results.append({
                             "doc_id": doc_id,
