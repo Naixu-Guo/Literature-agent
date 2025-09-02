@@ -1,7 +1,11 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "simpletooling-template"
+name = "literature-agent"
 version = "0.1.0"
-description = "Add your description here"
+description = "Quantum Literature Agent with comprehensive algorithm extraction"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -16,3 +20,11 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "requests>=2.31.0"
 ]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tools*"]
+exclude = ["tests*"]
+
+[tool.setuptools.py-modules]
+main = "main"
