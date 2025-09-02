@@ -26,5 +26,5 @@ where = ["."]
 include = ["tools*"]
 exclude = ["tests*"]
 
-[tool.setuptools.py-modules]
-main = "main"
+[tool.setuptools]
+py-modules = ["main"]
