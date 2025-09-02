@@ -412,20 +412,33 @@ class SimpleMCPLiteratureAgent:
                 title_keyword_matches = sum(1 for kw in query_keywords if kw in doc_title)
                 content_keyword_matches = sum(1 for kw in query_keywords if kw in content_sample)
                 
-                if (title_keyword_matches >= 2 or content_keyword_matches >= 2 or 
-                    any(term in doc_title or term in content_sample for term in [
-                        "hhl", "harrow", "hassidim", "lloyd", "linear systems",
-                        "phase estimation", "kitaev", "grover", "search",
-                        "singular value transformation", "qsvt"
-                    ])):
+                # Enhanced priority detection for better new document matching
+                specific_algorithms = [
+                    "hhl", "harrow", "hassidim", "lloyd", "linear systems",
+                    "phase estimation", "kitaev", "grover", "search",
+                    "singular value transformation", "qsvt",
+                    "shor", "factoring", "factorization", "discrete logarithm",
+                    "variational", "qaoa", "vqe", "adiabatic", "annealing"
+                ]
+                
+                # Check for strong matches in content or query terms
+                strong_match = (
+                    title_keyword_matches >= 2 or 
+                    content_keyword_matches >= 2 or
+                    any(term in doc_title or term in content_sample for term in specific_algorithms) or
+                    # Check if any query keywords strongly match document content
+                    any(keyword in content_sample and len(keyword) > 3 for keyword in query_keywords)
+                )
+                
+                if strong_match:
                     high_priority_docs.append(doc_id)
                 elif any(term in doc_title or term in content_sample for term in ["quantum", "algorithm"]):
                     medium_priority_docs.append(doc_id)
                 else:
                     low_priority_docs.append(doc_id)
             
-            # Search prioritized document groups
-            for priority_group, boost in [(high_priority_docs, 0.8), (medium_priority_docs, 0.3), (low_priority_docs, 0.0)]:
+            # Search prioritized document groups with stronger boost for high priority
+            for priority_group, boost in [(high_priority_docs, 1.5), (medium_priority_docs, 0.5), (low_priority_docs, 0.0)]:
                 for doc_id in priority_group:
                     vector_store = self.vector_stores[doc_id]
                     results = vector_store.similarity_search_with_score(query, k=min(num_results, 5))

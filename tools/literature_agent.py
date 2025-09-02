@@ -241,11 +241,38 @@ def web_research(query: str, num_results: int = 5) -> str:
                 doc_id = load_result["doc_id"]
                 title = load_result.get("title", query)
                 
+                # CRITICAL: Create embeddings immediately for new documents
+                if doc_id not in _agent.vector_stores:
+                    try:
+                        doc = _agent.documents[doc_id]
+                        chunks = doc.get("chunks", [])
+                        
+                        if chunks:
+                            embeddings = _agent._get_embeddings()
+                            if embeddings:
+                                from langchain.schema import Document
+                                from langchain_community.vectorstores import FAISS
+                                
+                                documents = [
+                                    Document(
+                                        page_content=chunk,
+                                        metadata={"doc_id": doc_id, "chunk_id": i}
+                                    )
+                                    for i, chunk in enumerate(chunks)
+                                ]
+                                
+                                vector_store = FAISS.from_documents(documents, embeddings)
+                                _agent.vector_stores[doc_id] = vector_store
+                                _agent._save_vector_store(doc_id)
+                    except Exception as e:
+                        # Continue even if embeddings fail - document is still loaded
+                        pass
+                
                 # Generate summary
                 summary_result = _agent.summarize(doc_id, max_length=200)
                 summary = summary_result.get("summary", "Document loaded successfully") if not summary_result.get("error") else "Document loaded successfully"
                 
-                return f"**Direct URL Load Result:**\n\n**✅ Successfully loaded:**\n1. **{title}**\nURL: {query}\nSummary: {summary}\nID: {doc_id}\n\n**Note:** Document added to your knowledge base and can be queried using `query_documents()`."
+                return f"**Direct URL Load Result:**\n\n**✅ Successfully loaded:**\n1. **{title}**\nURL: {query}\nSummary: {summary}\nID: {doc_id}\n\n**Note:** Document added to your knowledge base with embeddings and can be immediately queried using `query_documents()`."
             else:
                 return f"**Direct URL Load Failed:**\n\n**❌ Failed to load:** {query}\nError: {load_result.get('error', 'Unknown error')}\n\nTry using `summarize_source()` instead for direct document loading."
         
@@ -305,6 +332,33 @@ def web_research(query: str, num_results: int = 5) -> str:
             
             if load_result.get("success"):
                 doc_id = load_result["doc_id"]
+                
+                # CRITICAL: Create embeddings immediately for new documents
+                if doc_id not in _agent.vector_stores:
+                    try:
+                        doc = _agent.documents[doc_id]
+                        chunks = doc.get("chunks", [])
+                        
+                        if chunks:
+                            embeddings = _agent._get_embeddings()
+                            if embeddings:
+                                from langchain.schema import Document
+                                from langchain_community.vectorstores import FAISS
+                                
+                                documents = [
+                                    Document(
+                                        page_content=chunk,
+                                        metadata={"doc_id": doc_id, "chunk_id": i}
+                                    )
+                                    for i, chunk in enumerate(chunks)
+                                ]
+                                
+                                vector_store = FAISS.from_documents(documents, embeddings)
+                                _agent.vector_stores[doc_id] = vector_store
+                                _agent._save_vector_store(doc_id)
+                    except Exception as e:
+                        # Continue even if embeddings fail - document is still loaded
+                        pass
                 
                 # Generate brief summary (1-2 sentences) for quick overview
                 summary_result = _agent.summarize(doc_id, max_length=100)
