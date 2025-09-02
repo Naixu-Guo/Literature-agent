@@ -14,6 +14,33 @@ from tools.toolset import toolset
 from tools.mcp_backend import _agent
 
 
+def _get_early_chunks(doc_id: str, max_chunks: int = 5) -> List[str]:
+    """
+    Get early chunks from a document, which typically contain introduction, methods, and results.
+    Avoids late chunks that usually contain references/bibliography.
+    
+    :param doc_id: document ID
+    :param max_chunks: maximum number of early chunks to return
+    :return: list of early chunk contents
+    """
+    try:
+        doc = _agent.documents.get(doc_id, {})
+        chunks = doc.get("chunks", [])
+        
+        if not chunks:
+            return []
+        
+        # Get first N chunks, but limit to first 1/3 of document to avoid references
+        total_chunks = len(chunks)
+        early_limit = min(max_chunks, max(5, total_chunks // 3))  # At least 5, or 1/3 of doc
+        
+        return chunks[:early_limit]
+        
+    except Exception as e:
+        print(f"Warning: Failed to get early chunks for {doc_id}: {e}")
+        return []
+
+
 @toolset.add()
 def summarize_source(sources: Union[str, List[str]], title: Optional[str] = None, max_length: int = 800) -> str:
     """
@@ -70,17 +97,43 @@ def summarize_source(sources: Union[str, List[str]], title: Optional[str] = None
             
             summary = summary_result.get("summary", "No summary available")
         else:
-            # Multiple documents - use RAG for integrated summary limited to these docs
-            integrated_question = (
-                f"Provide a comprehensive integrated summary of the main themes, findings, and insights across all {len(doc_ids)} documents. "
-                f"Maximum length: {max_length} characters."
-            )
-            combined_result = _agent.ask_question(integrated_question, doc_ids=doc_ids, num_sources=len(doc_ids))
+            # Multiple documents - get content from early chunks for better integration
+            summary_parts = []
             
-            if "error" in combined_result:
-                return f"Error generating integrated summary: {combined_result['error']}"
+            for doc_id in doc_ids:
+                # Get early chunks (0-4) which contain intro, methods, results
+                early_chunks = _get_early_chunks(doc_id, max_chunks=5)
+                
+                if early_chunks:
+                    # Summarize each document's key content
+                    doc_summary = _agent.summarize(doc_id, max_length=max_length//len(doc_ids))
+                    if not doc_summary.get("error"):
+                        title = _agent.documents.get(doc_id, {}).get("metadata", {}).get("title", f"Document {doc_id}")
+                        summary_parts.append(f"**{title}**: {doc_summary.get('summary', '')}")
             
-            summary = combined_result.get("answer", "No integrated summary available")
+            if summary_parts:
+                # Create integrated summary from individual summaries
+                combined_content = "\n\n".join(summary_parts)
+                
+                # Use LLM to integrate the summaries
+                llm = _agent._get_llm()
+                if llm:
+                    integration_prompt = f"""Integrate these {len(doc_ids)} document summaries into a cohesive summary highlighting common themes, complementary insights, and key differences. Keep under {max_length} characters.
+
+{combined_content}
+
+Integrated summary:"""
+                    
+                    try:
+                        response = llm.invoke(integration_prompt)
+                        summary = response.content
+                    except Exception as e:
+                        # Fallback to concatenated summaries
+                        summary = f"Summary of {len(doc_ids)} documents:\n\n" + combined_content
+                else:
+                    summary = f"Summary of {len(doc_ids)} documents:\n\n" + combined_content
+            else:
+                summary = f"Unable to generate integrated summary for {len(doc_ids)} documents"
         
         # Add information about failed sources if any
         if failed_sources:
