@@ -40,8 +40,8 @@ class SimpleMCPLiteratureAgent:
         self.embeddings = None
         
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
+            chunk_size=2000,  # INCREASED for better context
+            chunk_overlap=400,  # INCREASED for better continuity
             length_function=len,
             separators=["\n\n", "\n", " ", ""]
         )
@@ -136,10 +136,67 @@ class SimpleMCPLiteratureAgent:
         except Exception as e:
             return {"error": f"Failed to load file: {str(e)}"}
     
+    def load_pdf(self, path: str, title: Optional[str] = None) -> dict:
+        """Load and process a PDF file"""
+        try:
+            if not os.path.isfile(path):
+                return {"error": f"File not found: {path}"}
+            
+            # Extract text from PDF using pypdf
+            with open(path, 'rb') as file:
+                pdf_reader = pypdf.PdfReader(file)
+                text_parts = []
+                
+                for page_num, page in enumerate(pdf_reader.pages):
+                    try:
+                        page_text = page.extract_text()
+                        if page_text.strip():
+                            text_parts.append(page_text)
+                    except Exception as e:
+                        print(f"Warning: Failed to extract text from page {page_num}: {e}")
+                        continue
+                
+                text = "\n\n".join(text_parts)
+            
+            if not text.strip():
+                return {"error": "No text could be extracted from PDF"}
+            
+            doc_id = hashlib.md5(f"{path}_{datetime.now().isoformat()}".encode()).hexdigest()[:12]
+            
+            metadata = {
+                "title": title or os.path.basename(path),
+                "source_type": "pdf",
+                "file_path": path,
+                "content_length": len(text),
+                "pages": len(pdf_reader.pages) if 'pdf_reader' in locals() else 0
+            }
+            
+            return self._process_document(doc_id, path, text, metadata)
+            
+        except Exception as e:
+            return {"error": f"Failed to load PDF: {str(e)}"}
     
     def load_url(self, url: str, title: Optional[str] = None) -> dict:
         """Load and process content from a URL with basic SSRF and size protections"""
         try:
+            original_url = url
+            
+            # CRITICAL FIX: Always convert arXiv URLs to PDF format for full content
+            if 'arxiv.org' in url:
+                if '/abs/' in url:
+                    # https://arxiv.org/abs/XXX -> https://arxiv.org/pdf/XXX.pdf
+                    url = url.replace('/abs/', '/pdf/')
+                    if not url.endswith('.pdf'):
+                        url += '.pdf'
+                elif not '/pdf/' in url and not url.endswith('.pdf'):
+                    # Handle other arXiv URL formats
+                    import re
+                    # Extract paper ID from various formats
+                    match = re.search(r'arxiv\.org/(?:abs/)?([0-9]+\.[0-9]+|[a-z\-]+/[0-9]+)', url)
+                    if match:
+                        paper_id = match.group(1)
+                        url = f"https://arxiv.org/pdf/{paper_id}.pdf"
+            
             # Basic SSRF protection: block private/internal IPs and file schemes
             parsed = urlparse(url)
             if parsed.scheme not in {"http", "https"}:
@@ -193,7 +250,8 @@ class SimpleMCPLiteratureAgent:
                 if content_length and int(content_length) > max_bytes:
                     return {"error": "Remote file too large"}
 
-                if url.endswith('.pdf') or 'application/pdf' in content_type:
+                # ALWAYS treat arXiv URLs as PDFs, regardless of content-type
+                if url.endswith('.pdf') or 'application/pdf' in content_type or 'arxiv.org' in url:
                     # Handle PDF URLs with streamed write and size cap
                     with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
                         downloaded = 0
@@ -337,21 +395,31 @@ class SimpleMCPLiteratureAgent:
                 doc_title = doc_info.get("metadata", {}).get("title", "").lower()
                 doc_source = doc_info.get("source", "").lower()
                 
-                # Skip test/dummy documents
-                if any(skip_term in doc_title or skip_term in doc_source for skip_term in [
-                    "httpbin.org", "dummy.pdf", "test_doc", "uuid", "hello world", "/tmp"
+                # Skip test/dummy documents (be specific to avoid blocking real papers)
+                if any(skip_term in doc_title for skip_term in [
+                    "httpbin.org", "test_doc", "uuid", "hello world", "dummy.pdf"
+                ]) or any(skip_term in doc_source for skip_term in [
+                    "httpbin.org", "test_doc", "uuid", "hello world", "dummy.pdf"
                 ]):
                     continue
                 
-                # High priority: exact keyword matches in title
+                # Check content for better prioritization since titles might be URLs
+                doc_chunks = doc_info.get("chunks", [])
+                content_sample = " ".join(doc_chunks[:3]).lower() if doc_chunks else ""  # Use first 3 chunks
+                
+                # High priority: exact keyword matches in title OR content
                 query_keywords = query_lower.split()
                 title_keyword_matches = sum(1 for kw in query_keywords if kw in doc_title)
+                content_keyword_matches = sum(1 for kw in query_keywords if kw in content_sample)
                 
-                if title_keyword_matches >= 2 or any(term in doc_title for term in [
-                    "singular value transformation", "qsvt", "nonlinear transformation"
-                ]):
+                if (title_keyword_matches >= 2 or content_keyword_matches >= 2 or 
+                    any(term in doc_title or term in content_sample for term in [
+                        "hhl", "harrow", "hassidim", "lloyd", "linear systems",
+                        "phase estimation", "kitaev", "grover", "search",
+                        "singular value transformation", "qsvt"
+                    ])):
                     high_priority_docs.append(doc_id)
-                elif any(term in doc_title for term in ["quantum", "algorithm"]):
+                elif any(term in doc_title or term in content_sample for term in ["quantum", "algorithm"]):
                     medium_priority_docs.append(doc_id)
                 else:
                     low_priority_docs.append(doc_id)
