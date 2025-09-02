@@ -561,6 +561,37 @@ def delete_document(doc_id: str) -> str:
 
 
 @toolset.add()
+def check_embeddings_health() -> str:
+    """
+    Check embeddings system health and provide diagnostic information.
+    
+    :return: embeddings health status and recommendations
+    """
+    try:
+        health = _agent.check_embeddings_health()
+        
+        if health.get("healthy"):
+            return f"✅ Embeddings healthy: {health['documents_with_embeddings']}/{health['total_documents']} documents have embeddings"
+        
+        if "error" in health:
+            return f"❌ Embeddings error: {health['error']}"
+        
+        status = f"⚠️  Embeddings incomplete:\n"
+        status += f"- Total documents: {health['total_documents']}\n"
+        status += f"- Documents with content: {health['documents_with_content']}\n"
+        status += f"- Documents with embeddings: {health['documents_with_embeddings']}\n"
+        status += f"- Missing embeddings: {health['missing_embeddings']}\n"
+        
+        if "fix" in health:
+            status += f"\n💡 Fix: {health['fix']}"
+        
+        return status
+        
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+@toolset.add()
 def create_embeddings(doc_id: str = "all") -> str:
     """
     Create embeddings for a specific document or all documents.
@@ -677,6 +708,89 @@ def clear_all_documents() -> str:
         status = f"Cleared {deleted} documents"
         if failed > 0:
             status += f", {failed} deletions failed"
+        
+        return status
+        
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+@toolset.add()
+def clean_duplicate_documents() -> str:
+    """
+    Remove duplicate and test documents to improve search quality.
+    Keeps the most recent version of each unique research paper.
+    
+    :return: cleanup status message
+    """
+    try:
+        list_result = _agent.list_documents()
+        docs = list_result.get("documents", [])
+        
+        if not docs:
+            return "No documents to clean."
+        
+        # Group documents by normalized title to find duplicates
+        title_groups = {}
+        test_docs = []
+        
+        for doc in docs:
+            title = doc.get('metadata', {}).get('title', '').lower()
+            source = doc.get('source', '').lower()
+            
+            # Identify test/dummy documents
+            if any(term in title or term in source for term in [
+                'httpbin.org', 'dummy.pdf', 'test_doc', 'test doc', 'uuid', 'hello world', 
+                'system test', 'fresh test', 'final test'
+            ]):
+                test_docs.append(doc['id'])
+                continue
+            
+            # Normalize title for duplicate detection
+            import re
+            normalized = re.sub(r'[^\w\s]', ' ', title).strip()
+            normalized = re.sub(r'\s+', ' ', normalized)
+            
+            if normalized:
+                if normalized not in title_groups:
+                    title_groups[normalized] = []
+                title_groups[normalized].append(doc)
+        
+        # Find duplicates and test docs to remove
+        to_remove = []
+        
+        # Remove test documents
+        to_remove.extend(test_docs)
+        
+        # Keep only the most recent version of each paper
+        for normalized_title, group in title_groups.items():
+            if len(group) > 1:
+                # Sort by creation date, keep the newest
+                group.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+                # Remove all but the newest
+                to_remove.extend([doc['id'] for doc in group[1:]])
+        
+        if not to_remove:
+            return "No duplicate or test documents found to clean."
+        
+        # Delete identified documents
+        deleted = 0
+        failed = 0
+        
+        for doc_id in to_remove:
+            result = _agent.delete_document(doc_id)
+            if result.get("success"):
+                deleted += 1
+            else:
+                failed += 1
+        
+        # Note: Embeddings will be automatically maintained for remaining documents
+        remaining_docs = [d for d in docs if d['id'] not in to_remove]
+        
+        status = f"Cleaned {deleted} duplicate/test documents"
+        if failed > 0:
+            status += f", {failed} deletions failed"
+        status += f". {len(remaining_docs)} research documents remain."
         
         return status
         

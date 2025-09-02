@@ -71,18 +71,28 @@ class SimpleMCPLiteratureAgent:
             return None
     
     def _get_embeddings(self):
-        """Get embeddings instance with fresh API key"""
+        """Get embeddings instance with fresh API key and robust error handling"""
         api_key = self._get_api_key()
         if not api_key or api_key.startswith("your-"):
             return None
         
         try:
             from langchain_google_genai import GoogleGenerativeAIEmbeddings
-            return GoogleGenerativeAIEmbeddings(
+            embeddings = GoogleGenerativeAIEmbeddings(
                 model=os.getenv("EMBED_MODEL", "models/embedding-001"),
                 google_api_key=api_key,
             )
-        except Exception:
+            
+            # Test embeddings with a simple query to ensure they work
+            try:
+                embeddings.embed_query("test")
+                return embeddings
+            except Exception as test_error:
+                print(f"Embeddings test failed: {test_error}")
+                return None
+                
+        except Exception as creation_error:
+            print(f"Embeddings creation failed: {creation_error}")
             return None
     
     def load_file(self, path: str, title: Optional[str] = None) -> dict:
@@ -666,13 +676,16 @@ OUTPUT (JSON only):"""
             pass
     
     def _load_vector_stores(self):
-        """Load vector stores from disk"""
+        """Load vector stores from disk with robust error handling"""
         embeddings = self._get_embeddings()
         if not embeddings:
             return
         
         try:
             from langchain_community.vectorstores import FAISS
+            loaded_count = 0
+            failed_count = 0
+            
             for vector_store_dir in self.vector_store_dir.iterdir():
                 if vector_store_dir.is_dir():
                     doc_id = vector_store_dir.name.replace('.faiss', '')
@@ -680,10 +693,41 @@ OUTPUT (JSON only):"""
                         try:
                             vector_store = FAISS.load_local(str(vector_store_dir), embeddings, allow_dangerous_deserialization=True)
                             self.vector_stores[doc_id] = vector_store
-                        except Exception:
-                            pass
-        except Exception:
-            pass
+                            loaded_count += 1
+                        except Exception as e:
+                            print(f"Failed to load vector store for {doc_id}: {e}")
+                            failed_count += 1
+            
+            if loaded_count > 0:
+                print(f"Loaded {loaded_count} vector stores, {failed_count} failed")
+        except Exception as e:
+            print(f"Vector store loading failed: {e}")
+    
+    def check_embeddings_health(self) -> dict:
+        """Check embeddings health and provide recovery options"""
+        try:
+            embeddings = self._get_embeddings()
+            if not embeddings:
+                return {"healthy": False, "issue": "Embeddings API not available", "fix": "Check GOOGLE_API_KEY"}
+            
+            docs_with_content = sum(1 for doc in self.documents.values() if doc.get("chunks"))
+            docs_with_embeddings = len(self.vector_stores)
+            
+            health_status = {
+                "healthy": docs_with_embeddings == docs_with_content,
+                "total_documents": len(self.documents),
+                "documents_with_content": docs_with_content,
+                "documents_with_embeddings": docs_with_embeddings,
+                "missing_embeddings": docs_with_content - docs_with_embeddings
+            }
+            
+            if not health_status["healthy"]:
+                health_status["fix"] = "Run create_embeddings('all') to fix missing embeddings"
+            
+            return health_status
+            
+        except Exception as e:
+            return {"healthy": False, "error": str(e)}
 
 
 # Global instance
