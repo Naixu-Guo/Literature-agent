@@ -67,8 +67,7 @@ class SimpleMCPLiteratureAgent:
                 google_api_key=api_key,
                 temperature=float(os.getenv("LLM_TEMPERATURE", "0.2")),
             )
-        except Exception as e:
-            print(f"Warning: Could not create LLM: {e}")
+        except Exception:
             return None
     
     def _get_embeddings(self):
@@ -83,8 +82,7 @@ class SimpleMCPLiteratureAgent:
                 model=os.getenv("EMBED_MODEL", "models/embedding-001"),
                 google_api_key=api_key,
             )
-        except Exception as e:
-            print(f"Warning: Could not create embeddings: {e}")
+        except Exception:
             return None
     
     def load_file(self, path: str, title: Optional[str] = None) -> dict:
@@ -128,9 +126,6 @@ class SimpleMCPLiteratureAgent:
         except Exception as e:
             return {"error": f"Failed to load file: {str(e)}"}
     
-    def load_pdf(self, path: str, title: Optional[str] = None) -> dict:
-        """Load and process a PDF document (backward compatibility)"""
-        return self.load_file(path, title)
     
     def load_url(self, url: str, title: Optional[str] = None) -> dict:
         """Load and process content from a URL with basic SSRF and size protections"""
@@ -286,8 +281,8 @@ class SimpleMCPLiteratureAgent:
                 self.vector_stores[doc_id] = vector_store
                 self._save_vector_store(doc_id)
                 has_embeddings = True
-            except Exception as e:
-                print(f"Warning: Failed to create embeddings: {e}")
+            except Exception:
+                pass
         
         # Store document
         self.documents[doc_id] = doc_info
@@ -456,9 +451,9 @@ class SimpleMCPLiteratureAgent:
             context_parts: List[str] = []
             sources: List[Dict[str, Any]] = []
             for res in results:
-                context_parts.append(
-                    f"[Source: {res['document_title']} | doc_id={res['doc_id']} | chunk={res['chunk_id']}]\n{res['content']}\n"
-                )
+                # Limit context size for performance
+                content = res['content'][:1500]  # Limit chunk size
+                context_parts.append(f"[{res['document_title']}]\n{content}")
                 sources.append({
                     "document": res["document_title"],
                     "doc_id": res["doc_id"],
@@ -468,37 +463,17 @@ class SimpleMCPLiteratureAgent:
             context = "\n".join(context_parts)
 
             schema = {
-                "schema_version": "1.0",
                 "algorithm_spec": {
                     "algorithm_name": None,
                     "problem_description": None,
-                    "input_parameters": {},
-                    "computational_model": {
-                        "gate_set": None,
-                        "oracle_model": None,
-                        "precision": None,
-                        "error_correction": {
-                            "code": None,
-                            "code_distance": None
-                        }
-                    },
                     "resources": {
                         "logical_qubits": None,
-                        "ancilla_qubits": None,
                         "t_count": None,
-                        "t_depth": None,
-                        "toffoli_count": None,
-                        "cnot_count": None,
-                        "depth": None,
                         "runtime_complexity": None,
                         "space_complexity": None
                     },
-                    "subroutines": [],
                     "algorithm_steps": [],
-                    "assumptions": [],
-                    "success_probability": None,
-                    "caveats": [],
-                    "confidence": None
+                    "success_probability": None
                 }
             }
 
@@ -509,20 +484,15 @@ class SimpleMCPLiteratureAgent:
                 "Use concise, unambiguous language suitable for downstream resource estimation. No markdown, no extra text."
             )
 
-            prompt = f"""
-{instruction}
+            prompt = f"""{instruction}
 
-SCHEMA:
-{json.dumps(schema, indent=2)}
+SCHEMA: {json.dumps(schema, separators=(',', ':'))}
 
-CONTEXT:
-{context}
+CONTEXT: {context[:8000]}
 
-QUERY:
-{query}
+QUERY: {query}
 
-OUTPUT:
-"""
+JSON:"""
 
             response = llm.invoke(prompt)
             raw = response.content if hasattr(response, "content") else str(response)
@@ -610,8 +580,8 @@ OUTPUT:
                 with open(doc_file, 'r') as f:
                     data = json.load(f)
                     self.documents[data["id"]] = data
-            except Exception as e:
-                print(f"Failed to load document {doc_file}: {e}")
+            except Exception:
+                pass
     
     def _save_vector_store(self, doc_id: str):
         """Save vector store to disk"""
@@ -621,8 +591,8 @@ OUTPUT:
         try:
             vector_store_file = self.vector_store_dir / f"{doc_id}.faiss"
             self.vector_stores[doc_id].save_local(str(vector_store_file))
-        except Exception as e:
-            print(f"Failed to save vector store for {doc_id}: {e}")
+        except Exception:
+            pass
     
     def _load_vector_stores(self):
         """Load vector stores from disk"""
@@ -639,10 +609,10 @@ OUTPUT:
                         try:
                             vector_store = FAISS.load_local(str(vector_store_dir), embeddings, allow_dangerous_deserialization=True)
                             self.vector_stores[doc_id] = vector_store
-                        except Exception as e:
-                            print(f"Failed to load vector store for {doc_id}: {e}")
-        except Exception as e:
-            print(f"Failed to load vector stores: {e}")
+                        except Exception:
+                            pass
+        except Exception:
+            pass
 
 
 # Global instance

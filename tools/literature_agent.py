@@ -16,46 +16,23 @@ from tools.mcp_backend import _agent
 
 
 def _auto_optimize_num_results(query: str) -> int:
-    """
-    Automatically optimize num_results based on query complexity and corpus size.
-    
-    :param query: the search query
-    :return: optimized number of results
-    """
+    """Auto-optimize num_results based on query complexity."""
     try:
-        # Get corpus size
+        query_words = len(query.split())
         corpus_size = len(_agent.documents)
         
-        # Analyze query complexity
-        query_words = len(query.split())
-        has_complex_terms = any(term in query.lower() for term in [
-            'compare', 'contrast', 'difference', 'relationship', 'how', 'why', 
-            'explain', 'analyze', 'comprehensive', 'detailed', 'multiple', 'various'
-        ])
+        # Fast calculation
+        base = 3 if query_words < 5 else 5 if query_words < 10 else 7
         
-        # Base calculation
-        if query_words < 5:
-            base_results = 3  # Simple queries
-        elif query_words < 10:
-            base_results = 5  # Medium queries  
-        else:
-            base_results = 7  # Complex queries
+        # Adjust for complexity and corpus size
+        if any(t in query.lower() for t in ['compare', 'analyze', 'explain', 'multiple']):
+            base += 2
+        if corpus_size > 30:
+            base += 1
             
-        # Adjust for complex terms
-        if has_complex_terms:
-            base_results += 2
-            
-        # Scale with corpus size
-        if corpus_size > 50:
-            base_results += 2
-        elif corpus_size > 20:
-            base_results += 1
-            
-        # Cap the results
-        return min(max(base_results, 3), 12)  # Between 3-12
-        
+        return min(max(base, 3), 10)
     except Exception:
-        return 5  # Safe fallback
+        return 5
 
 
 
@@ -81,8 +58,7 @@ def _get_early_chunks(doc_id: str, max_chunks: int = 5) -> List[str]:
         
         return chunks[:early_limit]
         
-    except Exception as e:
-        print(f"Warning: Failed to get early chunks for {doc_id}: {e}")
+    except Exception:
         return []
 
 
@@ -307,39 +283,29 @@ def _find_arxiv_alternative(title: str, snippet: str, original_url: str) -> Opti
         
         return None
         
-    except Exception as e:
-        print(f"Warning: arXiv fallback search failed: {e}")
+    except Exception:
         return None
 
 
 def _titles_similar(title1: str, title2: str) -> bool:
-    """
-    Basic similarity check between two paper titles.
+    """Fast title similarity check using key word overlap."""
+    import re
     
-    :param title1: first title
-    :param title2: second title
-    :return: True if titles are considered similar
-    """
-    # Normalize titles: remove punctuation, convert to lowercase, split into words
-    def normalize_title(title):
-        import re
-        # Remove common prefixes/suffixes and punctuation
+    # Quick normalization
+    def get_key_words(title):
         clean = re.sub(r'[^\w\s]', ' ', title.lower())
-        clean = re.sub(r'\b(the|a|an|on|in|for|with|of|to|and|or)\b', ' ', clean)
-        return set(clean.split())
+        words = clean.split()
+        return set(w for w in words if len(w) > 3)  # Only meaningful words
     
-    words1 = normalize_title(title1)
-    words2 = normalize_title(title2)
+    words1 = get_key_words(title1)
+    words2 = get_key_words(title2)
     
-    # Calculate Jaccard similarity (intersection / union)
     if not words1 or not words2:
         return False
-        
-    intersection = len(words1.intersection(words2))
-    union = len(words1.union(words2))
     
-    similarity = intersection / union if union > 0 else 0
-    return similarity > 0.6  # 60% similarity threshold
+    # Simple overlap check - faster than Jaccard
+    overlap = len(words1.intersection(words2))
+    return overlap >= 3 or overlap / min(len(words1), len(words2)) > 0.5
 
 
 @toolset.add()
