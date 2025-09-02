@@ -183,8 +183,8 @@ def query_documents(query: str, mode: str = "algorithm_spec", num_results: int =
             result = _agent.extract_algorithm_spec(query, num_sources=num_results)
             if "error" in result:
                 return f"Error: {result['error']}"
-            # Return compact JSON for API efficiency
-            return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+            # Return dict directly - toolset will handle JSON encoding
+            return result
 
         elif mode == "answer":
             rag = _agent.ask_question(query, num_sources=num_results)
