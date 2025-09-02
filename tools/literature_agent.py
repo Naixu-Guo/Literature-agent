@@ -303,222 +303,57 @@ Integrated summary:"""
 @toolset.add()
 def query_documents(query: str, mode: str = "algorithm_spec", num_results: int = -1) -> str:
     """
-    Query documents with a focus on producing a high-quality, structured description of
-    quantum algorithms suited for downstream resource estimation.
+    Query documents for quantum algorithm extraction optimized for resource estimation.
 
-    - mode="algorithm_spec" (default): returns strict JSON string per schema
-    - mode="answer": returns a concise textual answer with simple source list
+    :param query: search query focused on quantum algorithms
+    :param mode: "algorithm_spec" returns JSON schema, "answer" returns text
+    :param num_results: number of sources (auto-optimized if -1)
+    :return: structured algorithm specification or text answer
     """
     try:
-        # Auto-optimize num_results if requested
+        # Input validation for API safety
+        if not query or len(query.strip()) == 0:
+            return "Error: Query cannot be empty"
+        
+        query = query.strip()[:500]  # Limit query length
+        
+        # Auto-optimize num_results with safe bounds
         if num_results == -1:
             num_results = _auto_optimize_num_results(query)
+        num_results = max(1, min(num_results, 10))  # Clamp to safe range
 
         if mode == "algorithm_spec":
             result = _agent.extract_algorithm_spec(query, num_sources=num_results)
             if "error" in result:
                 return f"Error: {result['error']}"
+            # Return compact JSON for API efficiency
             return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
 
-        if mode == "answer":
+        elif mode == "answer":
             rag = _agent.ask_question(query, num_sources=num_results)
             if "error" in rag:
                 return f"Error: {rag['error']}"
+            
             answer = rag.get("answer", "No answer available")
             sources = rag.get("sources", [])
-            # Minimal, clean formatting
-            resp = answer.strip() + "\n"
+            
+            # Clean, minimal formatting for resource estimation use
+            response = answer.strip()
             if sources:
-                resp += "\nSources:\n" + "\n".join(
-                    f"- {s.get('document','Unknown')} (doc {s.get('doc_id')}, chunk {s.get('chunk_id')})" for s in sources
-                )
-            return resp
+                source_list = []
+                for s in sources[:5]:  # Limit sources for API safety
+                    doc = s.get('document', 'Unknown')[:100]
+                    source_list.append(f"- {doc}")
+                response += f"\n\nSources:\n" + "\n".join(source_list)
+            
+            return response
 
-        return "Error: Invalid mode. Use 'algorithm_spec' or 'answer'."
+        else:
+            return "Error: mode must be 'algorithm_spec' or 'answer'"
 
     except Exception as e:
         return f"Error: {str(e)}"
 
-
-def _enhanced_rag_answer(query: str, excerpts: List[dict]) -> dict:
-    """
-    Generate enhanced AI answer with better prompting and context awareness.
-    
-    :param query: the search query
-    :param excerpts: search result excerpts
-    :return: enhanced RAG result
-    """
-    try:
-        llm = _agent._get_llm()
-        if not llm:
-            return {"error": "LLM not available. Please set GOOGLE_API_KEY."}
-        
-        if not excerpts:
-            return {
-                "answer": "No relevant information found in the document corpus.",
-                "sources": []
-            }
-        
-        # Build context with source attribution (limit context size for API safety)
-        context_parts = []
-        sources = []
-        max_context_length = 8000  # Safe limit for API calls
-        current_length = 0
-        
-        for i, excerpt in enumerate(excerpts):
-            doc_title = excerpt.get("document_title", "Unknown Document")[:200]  # Limit title length
-            content = excerpt.get("content", "")[:1000]  # Limit content length
-            
-            # Check if adding this excerpt would exceed the limit
-            excerpt_text = f"[Source {i+1}: {doc_title}]\n{content}\n"
-            if current_length + len(excerpt_text) > max_context_length:
-                break
-                
-            context_parts.append(excerpt_text)
-            sources.append(doc_title)
-            current_length += len(excerpt_text)
-        
-        if not context_parts:
-            return {
-                "answer": "Content too large to process safely.",
-                "sources": []
-            }
-        
-        context = "\n".join(context_parts)
-        
-        # Enhanced prompt for better answer quality
-        prompt = f"""Based on the provided research excerpts, answer the question with academic rigor.
-
-Instructions:
-- Provide a comprehensive, well-structured answer
-- Cite specific findings and evidence from the sources
-- Use academic tone but remain accessible
-- If information is incomplete, clearly state limitations
-
-Context from {len(context_parts)} research excerpts:
-{context}
-
-Question: {query[:500]}  
-
-Answer:"""
-        
-        response = llm.invoke(prompt)
-        answer = response.content if hasattr(response, 'content') else str(response)
-        
-        return {
-            "answer": answer,
-            "sources": sources
-        }
-        
-    except Exception as e:
-        return {"error": f"Answer generation failed: {str(e)}"}
-
-
-def _curate_excerpts(excerpts: List[dict], query: str, max_excerpts: int = 3) -> List[dict]:
-    """
-    Select and format high-quality, diverse excerpts for display.
-    
-    :param excerpts: search result excerpts
-    :param query: original query for relevance scoring  
-    :param max_excerpts: maximum number of excerpts to return
-    :return: list of curated excerpt information
-    """
-    if not excerpts:
-        return []
-    
-    try:
-        # Simple scoring and selection for API safety
-        scored_excerpts = []
-        seen_docs = set()
-        
-        for excerpt in excerpts:
-            doc_id = excerpt.get("doc_id", "")
-            doc_title = excerpt.get("document_title", "Unknown")[:100]  # Limit title length
-            content = excerpt.get("content", "")[:400]  # Limit content length
-            similarity_score = float(excerpt.get("score", 0.0))
-            
-            # Simple relevance check
-            query_words = set(word.lower() for word in query.split() if len(word) > 2)
-            content_words = set(word.lower() for word in content.split() if len(word) > 2)
-            relevance = len(query_words.intersection(content_words)) / max(len(query_words), 1)
-            
-            # Diversity bonus for new documents
-            diversity_bonus = 0.3 if doc_id not in seen_docs else 0.0
-            seen_docs.add(doc_id)
-            
-            # Combined score
-            combined_score = similarity_score + relevance + diversity_bonus
-            
-            scored_excerpts.append({
-                "doc_title": doc_title,
-                "content": content,
-                "score": combined_score
-            })
-        
-        # Sort and select top excerpts
-        scored_excerpts.sort(key=lambda x: x["score"], reverse=True)
-        selected = scored_excerpts[:max_excerpts]
-        
-        # Format for display with safe truncation
-        curated = []
-        for item in selected:
-            content = item["content"]
-            doc_title = item["doc_title"]
-            
-            # Safe truncation
-            if len(content) > 250:
-                content = content[:247] + "..."
-            
-            curated.append({
-                "formatted_excerpt": f'*"{content}"* — {doc_title}'
-            })
-        
-        return curated
-        
-    except Exception:
-        # Simple fallback formatting
-        return [{
-            "formatted_excerpt": f'*"{excerpt.get("content", "")[:200]}..."* — {excerpt.get("document_title", "Unknown")[:50]}'
-        } for excerpt in excerpts[:max_excerpts]]
-
-
-def _clean_sources(sources: List[str]) -> List[str]:
-    """
-    Clean and deduplicate source citations for better presentation.
-    
-    :param sources: list of source strings
-    :return: cleaned and deduplicated source list
-    """
-    if not sources:
-        return []
-    
-    try:
-        # Simple deduplication and cleaning
-        seen = set()
-        cleaned = []
-        
-        for source in sources:
-            if not source or not source.strip():
-                continue
-                
-            # Basic cleaning - limit length and remove IDs
-            clean_source = source.strip()[:150]  # Limit length for API safety
-            
-            # Remove ID patterns
-            if " (ID:" in clean_source:
-                clean_source = clean_source.split(" (ID:")[0]
-            
-            # Avoid duplicates
-            source_key = clean_source.lower()
-            if source_key not in seen and len(clean_source) > 5:
-                seen.add(source_key)
-                cleaned.append(clean_source)
-        
-        return cleaned[:10]  # Limit to 10 sources for API safety
-        
-    except Exception:
-        # Simple fallback
-        return list(set(str(s)[:100] for s in sources if s))[:5]
 
 
 def _find_arxiv_alternative(title: str, snippet: str, original_url: str) -> Optional[str]:
@@ -797,6 +632,92 @@ def delete_document(doc_id: str) -> str:
             return f"Document {doc_id} deleted successfully."
         else:
             return f"Failed to delete document {doc_id}."
+        
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+@toolset.add()
+def create_embeddings(doc_id: str = "all") -> str:
+    """
+    Create embeddings for a specific document or all documents.
+    Required for quantum algorithm extraction and search functionality.
+    
+    :param doc_id: document ID or "all" for all documents
+    :return: status message
+    """
+    try:
+        if doc_id == "all":
+            # Create embeddings for all documents
+            docs = _agent.documents.keys()
+            success_count = 0
+            error_count = 0
+            
+            for doc_id in docs:
+                if doc_id not in _agent.vector_stores:
+                    try:
+                        doc = _agent.documents[doc_id]
+                        chunks = doc.get("chunks", [])
+                        
+                        if chunks:
+                            embeddings = _agent._get_embeddings()
+                            if embeddings:
+                                from langchain.schema import Document
+                                from langchain_community.vectorstores import FAISS
+                                
+                                documents = [
+                                    Document(
+                                        page_content=chunk,
+                                        metadata={"doc_id": doc_id, "chunk_id": i}
+                                    )
+                                    for i, chunk in enumerate(chunks)
+                                ]
+                                
+                                vector_store = FAISS.from_documents(documents, embeddings)
+                                _agent.vector_stores[doc_id] = vector_store
+                                success_count += 1
+                            else:
+                                error_count += 1
+                        else:
+                            error_count += 1
+                    except Exception:
+                        error_count += 1
+            
+            return f"Created embeddings for {success_count} documents, {error_count} failed"
+        
+        else:
+            # Create embeddings for specific document
+            if doc_id not in _agent.documents:
+                return f"Error: Document {doc_id} not found"
+            
+            if doc_id in _agent.vector_stores:
+                return f"Document {doc_id} already has embeddings"
+            
+            doc = _agent.documents[doc_id]
+            chunks = doc.get("chunks", [])
+            
+            if not chunks:
+                return f"Error: Document {doc_id} has no chunks"
+            
+            embeddings = _agent._get_embeddings()
+            if not embeddings:
+                return "Error: Embeddings not available. Check GOOGLE_API_KEY"
+            
+            from langchain.schema import Document
+            from langchain_community.vectorstores import FAISS
+            
+            documents = [
+                Document(
+                    page_content=chunk,
+                    metadata={"doc_id": doc_id, "chunk_id": i}
+                )
+                for i, chunk in enumerate(chunks)
+            ]
+            
+            vector_store = FAISS.from_documents(documents, embeddings)
+            _agent.vector_stores[doc_id] = vector_store
+            
+            return f"Created embeddings for document {doc_id}"
         
     except Exception as e:
         return f"Error: {str(e)}"
