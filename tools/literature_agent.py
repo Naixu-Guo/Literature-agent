@@ -152,10 +152,99 @@ def query_documents(query: str, num_results: int = 5) -> str:
         return f"Error: {str(e)}"
 
 
+def _find_arxiv_alternative(title: str, snippet: str, original_url: str) -> Optional[str]:
+    """
+    Try to find an arXiv PDF alternative for a paper that requires authentication.
+    
+    :param title: paper title
+    :param snippet: paper snippet/abstract
+    :param original_url: original URL that failed
+    :return: arXiv PDF URL if found, None otherwise
+    """
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+        from urllib.parse import quote
+        import re
+        
+        # Extract potential arXiv ID from original URL
+        arxiv_id_match = re.search(r'(\d{4}\.\d{4,5}(?:v\d+)?)', original_url)
+        if arxiv_id_match:
+            arxiv_id = arxiv_id_match.group(1)
+            return f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+        
+        # Search arXiv directly using title
+        clean_title = re.sub(r'[^\w\s]', ' ', title).strip()
+        search_terms = ' '.join(clean_title.split()[:8])  # Use first 8 words
+        
+        arxiv_search_url = f"https://arxiv.org/search/?query={quote(search_terms)}&searchtype=all&source=header"
+        
+        headers = {'User-Agent': 'Literature-Agent/1.0'}
+        response = requests.get(arxiv_search_url, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            return None
+            
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Look for search results
+        for result in soup.find_all('li', class_='arxiv-result'):
+            result_title_elem = result.find('p', class_='title')
+            if not result_title_elem:
+                continue
+                
+            result_title = result_title_elem.get_text(strip=True)
+            
+            # Check if titles are similar (basic similarity check)
+            if _titles_similar(title, result_title):
+                # Extract arXiv ID from the result
+                link_elem = result.find('a', href=True)
+                if link_elem and '/abs/' in link_elem['href']:
+                    arxiv_id = link_elem['href'].split('/abs/')[-1]
+                    return f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+        
+        return None
+        
+    except Exception as e:
+        print(f"Warning: arXiv fallback search failed: {e}")
+        return None
+
+
+def _titles_similar(title1: str, title2: str) -> bool:
+    """
+    Basic similarity check between two paper titles.
+    
+    :param title1: first title
+    :param title2: second title
+    :return: True if titles are considered similar
+    """
+    # Normalize titles: remove punctuation, convert to lowercase, split into words
+    def normalize_title(title):
+        import re
+        # Remove common prefixes/suffixes and punctuation
+        clean = re.sub(r'[^\w\s]', ' ', title.lower())
+        clean = re.sub(r'\b(the|a|an|on|in|for|with|of|to|and|or)\b', ' ', clean)
+        return set(clean.split())
+    
+    words1 = normalize_title(title1)
+    words2 = normalize_title(title2)
+    
+    # Calculate Jaccard similarity (intersection / union)
+    if not words1 or not words2:
+        return False
+        
+    intersection = len(words1.intersection(words2))
+    union = len(words1.union(words2))
+    
+    similarity = intersection / union if union > 0 else 0
+    return similarity > 0.6  # 60% similarity threshold
+
+
 @toolset.add()
 def web_research(query: str, num_results: int = 5) -> str:
     """
     Search and load web documents related to a query, returning a comprehensive summary.
+    Automatically finds arXiv PDF alternatives for papers behind authentication walls.
     
     :param query: search query
     :param num_results: maximum number of results to load (default: 5)
@@ -212,6 +301,17 @@ def web_research(query: str, num_results: int = 5) -> str:
             
             # Try to load the document using MCP
             load_result = _agent.load_url(url, title=title)
+            final_url = url
+            final_status = "original"
+            
+            # If loading failed, try to find arXiv alternative
+            if not load_result.get("success"):
+                arxiv_url = _find_arxiv_alternative(title, snippet, url)
+                if arxiv_url:
+                    load_result = _agent.load_url(arxiv_url, title=title)
+                    if load_result.get("success"):
+                        final_url = arxiv_url
+                        final_status = "arxiv_fallback"
             
             if load_result.get("success"):
                 doc_id = load_result["doc_id"]
@@ -223,11 +323,12 @@ def web_research(query: str, num_results: int = 5) -> str:
                 
                 results.append({
                     "title": title,
-                    "url": url,
+                    "url": final_url,
+                    "original_url": url if final_status == "arxiv_fallback" else None,
                     "snippet": snippet,
                     "summary": summary,
                     "doc_id": doc_id,
-                    "status": "loaded"
+                    "status": final_status
                 })
                 loaded_count += 1
             else:
@@ -244,6 +345,9 @@ def web_research(query: str, num_results: int = 5) -> str:
             for i, result in enumerate(results, 1):
                 output += f"**{i}. {result['title']}**\n"
                 output += f"URL: {result['url']}\n"
+                if result.get('original_url'):
+                    output += f"Original URL (auth required): {result['original_url']}\n"
+                    output += f"✅ Found arXiv alternative!\n"
                 if result['snippet']:
                     output += f"Snippet: {result['snippet'][:200]}...\n"
                 output += f"Summary: {result['summary']}\n"
