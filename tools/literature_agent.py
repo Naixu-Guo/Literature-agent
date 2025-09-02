@@ -51,30 +51,6 @@ def _auto_optimize_num_results(query: str) -> int:
 
 
 
-def _get_early_chunks(doc_id: str, max_chunks: int = 5) -> List[str]:
-    """
-    Get early chunks from a document, which typically contain introduction, methods, and results.
-    Avoids late chunks that usually contain references/bibliography.
-    
-    :param doc_id: document ID
-    :param max_chunks: maximum number of early chunks to return
-    :return: list of early chunk contents
-    """
-    try:
-        doc = _agent.documents.get(doc_id, {})
-        chunks = doc.get("chunks", [])
-        
-        if not chunks:
-            return []
-        
-        # Get first N chunks, but limit to first 1/3 of document to avoid references
-        total_chunks = len(chunks)
-        early_limit = min(max_chunks, max(5, total_chunks // 3))  # At least 5, or 1/3 of doc
-        
-        return chunks[:early_limit]
-        
-    except Exception:
-        return []
 
 
 @toolset.add()
@@ -133,19 +109,15 @@ def summarize_source(sources: Union[str, List[str]], title: Optional[str] = None
             
             summary = summary_result.get("summary", "No summary available")
         else:
-            # Multiple documents - get content from early chunks for better integration
+            # Multiple documents - integrated summarization
             summary_parts = []
             
             for doc_id in doc_ids:
-                # Get early chunks (0-4) which contain intro, methods, results
-                early_chunks = _get_early_chunks(doc_id, max_chunks=5)
-                
-                if early_chunks:
-                    # Summarize each document's key content
-                    doc_summary = _agent.summarize(doc_id, max_length=max_length//len(doc_ids))
-                    if not doc_summary.get("error"):
-                        title = _agent.documents.get(doc_id, {}).get("metadata", {}).get("title", f"Document {doc_id}")
-                        summary_parts.append(f"**{title}**: {doc_summary.get('summary', '')}")
+                # Summarize each document's key content
+                doc_summary = _agent.summarize(doc_id, max_length=max_length//len(doc_ids))
+                if not doc_summary.get("error"):
+                    title = _agent.documents.get(doc_id, {}).get("metadata", {}).get("title", f"Document {doc_id}")
+                    summary_parts.append(f"**{title}**: {doc_summary.get('summary', '')}")
             
             if summary_parts:
                 # Create integrated summary from individual summaries
@@ -241,86 +213,6 @@ def query_documents(query: str, mode: str = "algorithm_spec", num_results: int =
 
 
 
-def _find_arxiv_alternative(title: str, snippet: str, original_url: str) -> Optional[str]:
-    """
-    Try to find an arXiv PDF alternative for a paper that requires authentication.
-    
-    :param title: paper title
-    :param snippet: paper snippet/abstract
-    :param original_url: original URL that failed
-    :return: arXiv PDF URL if found, None otherwise
-    """
-    try:
-        import requests
-        from bs4 import BeautifulSoup
-        from urllib.parse import quote
-        import re
-        
-        # Extract potential arXiv ID from original URL
-        arxiv_id_match = re.search(r'(\d{4}\.\d{4,5}(?:v\d+)?)', original_url)
-        if arxiv_id_match:
-            arxiv_id = arxiv_id_match.group(1)
-            return f"https://arxiv.org/pdf/{arxiv_id}.pdf"
-        
-        # Only use title-based search if we have a meaningful title
-        if not title or len(title.strip()) < 10:
-            return None
-            
-        # Search arXiv by title
-        clean_title = re.sub(r'[^\w\s]', ' ', title).strip()
-        search_terms = ' '.join(clean_title.split()[:8])  # Use first 8 words
-        
-        arxiv_search_url = f"https://arxiv.org/search/?query={quote(search_terms)}&searchtype=all&source=header"
-        
-        headers = {'User-Agent': 'Literature-Agent/1.0'}
-        response = requests.get(arxiv_search_url, headers=headers, timeout=10)
-        
-        if response.status_code != 200:
-            return None
-            
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Look for search results with title similarity check
-        for result in soup.find_all('li', class_='arxiv-result'):
-            result_title_elem = result.find('p', class_='title')
-            if not result_title_elem:
-                continue
-                
-            result_title = result_title_elem.get_text(strip=True)
-            
-            # Check if titles are similar
-            if _titles_similar(title, result_title):
-                # Extract arXiv ID from the result
-                link_elem = result.find('a', href=True)
-                if link_elem and '/abs/' in link_elem['href']:
-                    arxiv_id = link_elem['href'].split('/abs/')[-1]
-                    return f"https://arxiv.org/pdf/{arxiv_id}.pdf"
-        
-        return None
-        
-    except Exception:
-        return None
-
-
-def _titles_similar(title1: str, title2: str) -> bool:
-    """Fast title similarity check using key word overlap."""
-    import re
-    
-    # Quick normalization
-    def get_key_words(title):
-        clean = re.sub(r'[^\w\s]', ' ', title.lower())
-        words = clean.split()
-        return set(w for w in words if len(w) > 3)  # Only meaningful words
-    
-    words1 = get_key_words(title1)
-    words2 = get_key_words(title2)
-    
-    if not words1 or not words2:
-        return False
-    
-    # Simple overlap check - faster than Jaccard
-    overlap = len(words1.intersection(words2))
-    return overlap >= 3 or overlap / min(len(words1), len(words2)) > 0.5
 
 
 @toolset.add()
@@ -355,26 +247,6 @@ def web_research(query: str, num_results: int = 5) -> str:
                 
                 return f"**Direct URL Load Result:**\n\n**✅ Successfully loaded:**\n1. **{title}**\nURL: {query}\nSummary: {summary}\nID: {doc_id}\n\n**Note:** Document added to your knowledge base and can be queried using `query_documents()`."
             else:
-                # Try arXiv fallback if it's not already an arXiv URL
-                if 'arxiv.org' not in query.lower():
-                    # Extract potential paper info for arXiv search
-                    try:
-                        response = requests.get(query, timeout=10)
-                        soup = BeautifulSoup(response.text, 'html.parser')
-                        title = soup.title.string if soup.title else ""
-                        
-                        arxiv_url = _find_arxiv_alternative(title, "", query)
-                        if arxiv_url:
-                            load_result = _agent.load_url(arxiv_url, title=title)
-                            if load_result.get("success"):
-                                doc_id = load_result["doc_id"]
-                                summary_result = _agent.summarize(doc_id, max_length=200)
-                                summary = summary_result.get("summary", "Document loaded successfully") if not summary_result.get("error") else "Document loaded successfully"
-                                
-                                return f"**Direct URL Load Result (arXiv fallback):**\n\n**✅ Successfully loaded:**\n1. **{title}**\n✅ arXiv: {arxiv_url}\n(Original: {query})\nSummary: {summary}\nID: {doc_id}\n\n**Note:** Document added to your knowledge base and can be queried using `query_documents()`."
-                    except:
-                        pass
-                
                 return f"**Direct URL Load Failed:**\n\n**❌ Failed to load:** {query}\nError: {load_result.get('error', 'Unknown error')}\n\nTry using `summarize_source()` instead for direct document loading."
         
         # Original Google Scholar search logic for text queries
@@ -431,15 +303,6 @@ def web_research(query: str, num_results: int = 5) -> str:
             final_url = url
             final_status = "original"
             
-            # If loading failed, try to find arXiv alternative
-            if not load_result.get("success"):
-                arxiv_url = _find_arxiv_alternative(title, snippet, url)
-                if arxiv_url:
-                    load_result = _agent.load_url(arxiv_url, title=title)
-                    if load_result.get("success"):
-                        final_url = arxiv_url
-                        final_status = "arxiv_fallback"
-            
             if load_result.get("success"):
                 doc_id = load_result["doc_id"]
                 
@@ -455,7 +318,6 @@ def web_research(query: str, num_results: int = 5) -> str:
                 results.append({
                     "title": title,
                     "url": final_url,
-                    "original_url": url if final_status == "arxiv_fallback" else None,
                     "snippet": snippet,
                     "summary": summary,
                     "doc_id": doc_id,
@@ -475,11 +337,7 @@ def web_research(query: str, num_results: int = 5) -> str:
             output += f"**Successfully loaded {len(results)} document(s):**\n\n"
             for i, result in enumerate(results, 1):
                 output += f"**{i}. {result['title']}**\n"
-                if result.get('original_url'):
-                    output += f"✅ arXiv: {result['url']}\n"
-                    output += f"(Original: {result['original_url']})\n"
-                else:
-                    output += f"URL: {result['url']}\n"
+                output += f"URL: {result['url']}\n"
                 output += f"Brief: {result['summary']}\n"
                 output += f"ID: {result['doc_id']}\n\n"
         
