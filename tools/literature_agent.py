@@ -16,23 +16,38 @@ from tools.mcp_backend import _agent
 
 
 def _auto_optimize_num_results(query: str) -> int:
-    """Auto-optimize num_results based on query complexity."""
+    """Auto-optimize num_results for maximum quality algorithm extraction."""
     try:
         query_words = len(query.split())
         corpus_size = len(_agent.documents)
+        query_lower = query.lower()
         
-        # Fast calculation
-        base = 3 if query_words < 5 else 5 if query_words < 10 else 7
+        # Start with higher base for better coverage
+        if query_words < 5:
+            base = 5  # Simple queries still need context
+        elif query_words < 10:
+            base = 7  # Medium queries
+        else:
+            base = 10  # Complex queries need more context
         
-        # Adjust for complexity and corpus size
-        if any(t in query.lower() for t in ['compare', 'analyze', 'explain', 'multiple']):
+        # Boost for algorithm-specific queries
+        if any(t in query_lower for t in ['algorithm', 'quantum', 'resource', 'complexity']):
+            base += 3
+        
+        # Boost for analysis queries
+        if any(t in query_lower for t in ['compare', 'analyze', 'explain', 'detail', 'comprehensive']):
             base += 2
-        if corpus_size > 30:
-            base += 1
             
-        return min(max(base, 3), 10)
+        # Scale with corpus size
+        if corpus_size > 50:
+            base += 3
+        elif corpus_size > 20:
+            base += 2
+            
+        # Higher ceiling for quality
+        return min(max(base, 5), 20)  # 5-20 results for comprehensive coverage
     except Exception:
-        return 5
+        return 8  # Higher default for quality
 
 
 
@@ -187,10 +202,10 @@ def query_documents(query: str, mode: str = "algorithm_spec", num_results: int =
         
         query = query.strip()[:500]  # Limit query length
         
-        # Auto-optimize num_results with safe bounds
+        # Auto-optimize num_results for quality
         if num_results == -1:
             num_results = _auto_optimize_num_results(query)
-        num_results = max(1, min(num_results, 10))  # Clamp to safe range
+        num_results = max(1, min(num_results, 20))  # Allow up to 20 for comprehensive extraction
 
         if mode == "algorithm_spec":
             result = _agent.extract_algorithm_spec(query, num_sources=num_results)
