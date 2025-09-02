@@ -32,6 +32,8 @@ class SimpleMCPLiteratureAgent:
         self.vector_stores = {}
         self.storage_dir = Path("mcp_literature_storage")
         self.storage_dir.mkdir(exist_ok=True)
+        self.vector_store_dir = self.storage_dir / "vector_stores"
+        self.vector_store_dir.mkdir(exist_ok=True)
         
         # Initialize LLM and embeddings as None - will be created dynamically
         self.llm = None
@@ -45,6 +47,7 @@ class SimpleMCPLiteratureAgent:
         )
         
         self._load_saved_documents()
+        self._load_vector_stores()
     
     def _get_api_key(self):
         """Get fresh API key by reloading .env file"""
@@ -281,6 +284,7 @@ class SimpleMCPLiteratureAgent:
 
                 vector_store = FAISS.from_documents(documents, embeddings)
                 self.vector_stores[doc_id] = vector_store
+                self._save_vector_store(doc_id)
                 has_embeddings = True
             except Exception as e:
                 print(f"Warning: Failed to create embeddings: {e}")
@@ -595,9 +599,9 @@ OUTPUT:
     def _save_document(self, doc_info: dict):
         """Save document to disk"""
         doc_file = self.storage_dir / f"{doc_info['id']}.json"
-        save_data = {k: v for k, v in doc_info.items() if k != "content"}  # Don't save full content
+        # Save all document data including content for full functionality
         with open(doc_file, 'w') as f:
-            json.dump(save_data, f, indent=2)
+            json.dump(doc_info, f, indent=2)
     
     def _load_saved_documents(self):
         """Load saved documents from disk"""
@@ -608,185 +612,39 @@ OUTPUT:
                     self.documents[data["id"]] = data
             except Exception as e:
                 print(f"Failed to load document {doc_file}: {e}")
+    
+    def _save_vector_store(self, doc_id: str):
+        """Save vector store to disk"""
+        if doc_id not in self.vector_stores:
+            return
+        
+        try:
+            vector_store_file = self.vector_store_dir / f"{doc_id}.faiss"
+            self.vector_stores[doc_id].save_local(str(vector_store_file))
+        except Exception as e:
+            print(f"Failed to save vector store for {doc_id}: {e}")
+    
+    def _load_vector_stores(self):
+        """Load vector stores from disk"""
+        embeddings = self._get_embeddings()
+        if not embeddings:
+            return
+        
+        try:
+            from langchain_community.vectorstores import FAISS
+            for vector_store_dir in self.vector_store_dir.iterdir():
+                if vector_store_dir.is_dir():
+                    doc_id = vector_store_dir.name.replace('.faiss', '')
+                    if doc_id in self.documents:
+                        try:
+                            vector_store = FAISS.load_local(str(vector_store_dir), embeddings, allow_dangerous_deserialization=True)
+                            self.vector_stores[doc_id] = vector_store
+                        except Exception as e:
+                            print(f"Failed to load vector store for {doc_id}: {e}")
+        except Exception as e:
+            print(f"Failed to load vector stores: {e}")
 
 
 # Global instance
 _agent = SimpleMCPLiteratureAgent()
 
-
-def mcp_load_document(source: str, title: Optional[str] = None) -> str:
-    """Load a document (PDF, text file, or URL) into the MCP system for processing."""
-    
-    try:
-        if source.startswith("http://") or source.startswith("https://"):
-            result = _agent.load_url(source, title)
-        else:
-            result = _agent.load_file(source, title)  # Now handles both PDF and text files
-        
-        if "error" in result:
-            return f"Error: {result['error']}"
-        
-        if result.get("success"):
-            return (f"✓ Document loaded successfully!\n"
-                   f"  Document ID: {result.get('doc_id')}\n"
-                   f"  Title: {result.get('title')}\n"
-                   f"  Chunks: {result.get('chunks')}\n"
-                   f"  Has embeddings: {result.get('has_embeddings', False)}")
-        else:
-            return f"Failed to load document: {json.dumps(result, indent=2)}"
-    
-    except Exception as e:
-        return f"Error loading document: {str(e)}"
-
-
-def mcp_search_documents(query: str, num_results: int = 5) -> str:
-    """Search across all loaded documents using semantic search."""
-    
-    try:
-        result = _agent.search(query, num_results)
-        
-        if "error" in result:
-            return f"Error: {result['error']}"
-        
-        output = [f"Search Results for: '{query}'"]
-        output.append(f"Found {result.get('num_results', 0)} relevant chunks\n")
-        
-        for i, res in enumerate(result.get("results", []), 1):
-            output.append(f"Result {i}:")
-            output.append(f"  Document: {res.get('document_title')}")
-            output.append(f"  Score: {res.get('score', 'N/A'):.4f}")
-            output.append(f"  Content: {res.get('content', '')[:200]}...")
-            output.append("")
-        
-        return "\n".join(output)
-    
-    except Exception as e:
-        return f"Error searching documents: {str(e)}"
-
-
-def mcp_summarize_document(doc_id: str, max_length: int = 500) -> str:
-    """Generate a summary of a loaded document."""
-    
-    try:
-        result = _agent.summarize(doc_id, max_length)
-        
-        if "error" in result:
-            return f"Error: {result['error']}"
-        
-        output = [f"Document Summary"]
-        output.append(f"Title: {result.get('title', 'Unknown')}")
-        output.append(f"Document ID: {result.get('doc_id', doc_id)}")
-        output.append(f"Cached: {result.get('cached', False)}")
-        output.append(f"\nSummary:\n{result.get('summary', 'No summary available')}")
-        
-        return "\n".join(output)
-    
-    except Exception as e:
-        return f"Error summarizing document: {str(e)}"
-
-
-def mcp_ask_question(question: str, num_sources: int = 4) -> str:
-    """Ask a question about the loaded documents using RAG."""
-    
-    try:
-        result = _agent.ask_question(question, num_sources=num_sources)
-        
-        if "error" in result:
-            return f"Error: {result['error']}"
-        
-        output = [f"Question: {question}\n"]
-        output.append(f"Answer:\n{result.get('answer', 'No answer available')}\n")
-        
-        if result.get("sources"):
-            output.append("Sources:")
-            for i, source in enumerate(result["sources"], 1):
-                output.append(f"  {i}. {source.get('document', 'Unknown')} (chunk {source.get('chunk_id', 'N/A')})")
-        
-        return "\n".join(output)
-    
-    except Exception as e:
-        return f"Error answering question: {str(e)}"
-
-
-def mcp_list_documents() -> str:
-    """List all documents currently loaded in the MCP system."""
-    
-    try:
-        result = _agent.list_documents()
-        
-        num_docs = result.get("num_documents", 0)
-        
-        if num_docs == 0:
-            return "No documents loaded. Use mcp_load_document() to load PDFs or URLs."
-        
-        output = [f"Loaded Documents ({num_docs} total):\n"]
-        
-        for doc in result.get("documents", []):
-            output.append(f"• {doc.get('metadata', {}).get('title', 'Untitled')}")
-            output.append(f"  ID: {doc.get('id')}")
-            output.append(f"  Source: {doc.get('source')}")
-            output.append(f"  Type: {doc.get('metadata', {}).get('source_type')}")
-            output.append(f"  Chunks: {doc.get('num_chunks', 0)}")
-            output.append(f"  Has embeddings: {doc.get('has_embeddings', False)}")
-            output.append(f"  Has summary: {doc.get('has_summary', False)}")
-            output.append("")
-        
-        return "\n".join(output)
-    
-    except Exception as e:
-        return f"Error listing documents: {str(e)}"
-
-
-def mcp_delete_document(doc_id: str) -> str:
-    """Delete a document from the MCP system."""
-    
-    try:
-        result = _agent.delete_document(doc_id)
-        
-        if "error" in result:
-            return f"Error: {result['error']}"
-        
-        if result.get("success"):
-            return f"✓ {result.get('message', 'Document deleted successfully')}"
-        else:
-            return f"Failed to delete document: {json.dumps(result, indent=2)}"
-    
-    except Exception as e:
-        return f"Error deleting document: {str(e)}"
-
-
-def mcp_batch_load(sources: List[str]) -> str:
-    """Load multiple documents at once."""
-    
-    if not sources:
-        return "Error: No sources provided"
-    
-    results = []
-    successful = 0
-    failed = 0
-    
-    for source in sources:
-        try:
-            if source.startswith("http://") or source.startswith("https://"):
-                result = _agent.load_url(source)
-            else:
-                result = _agent.load_pdf(source)
-            
-            if "error" in result:
-                results.append(f"✗ {source}: {result['error']}")
-                failed += 1
-            elif result.get("success"):
-                results.append(f"✓ {source}: Loaded as {result.get('doc_id')}")
-                successful += 1
-            else:
-                results.append(f"✗ {source}: Unknown error")
-                failed += 1
-        
-        except Exception as e:
-            results.append(f"✗ {source}: {str(e)}")
-            failed += 1
-    
-    output = [f"Batch Load Results: {successful} successful, {failed} failed\n"]
-    output.extend(results)
-    
-    return "\n".join(output)

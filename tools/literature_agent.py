@@ -58,112 +58,6 @@ def _auto_optimize_num_results(query: str) -> int:
         return 5  # Safe fallback
 
 
-def _enhanced_search(query: str, num_results: int) -> dict:
-    """
-    Enhanced search that prioritizes content-rich chunks over references/bibliography.
-    
-    :param query: search query
-    :param num_results: number of results to return
-    :return: search results dictionary
-    """
-    try:
-        # Get more results than needed for filtering
-        expanded_results = _agent.search(query, num_results=num_results * 2)
-        
-        if "error" in expanded_results:
-            return expanded_results
-            
-        all_results = expanded_results.get("results", [])
-        
-        # Score and filter results
-        scored_results = []
-        for result in all_results:
-            chunk_id = result.get("chunk_id", 0)
-            doc_id = result.get("doc_id", "")
-            content = result.get("content", "")
-            
-            # Get total chunks for this document  
-            doc = _agent.documents.get(doc_id, {})
-            total_chunks = len(doc.get("chunks", []))
-            
-            # Calculate content quality score
-            score = _calculate_content_score(content, chunk_id, total_chunks)
-            
-            scored_results.append({
-                **result,
-                "content_score": score
-            })
-        
-        # Sort by content quality, then by similarity score
-        scored_results.sort(key=lambda x: (x["content_score"], -x["score"]), reverse=True)
-        
-        # Return top results
-        filtered_results = scored_results[:num_results]
-        
-        return {
-            "query": query,
-            "num_results": len(filtered_results),
-            "results": filtered_results
-        }
-        
-    except Exception as e:
-        # Fallback to regular search
-        return _agent.search(query, num_results)
-
-
-def _calculate_content_score(content: str, chunk_id: int, total_chunks: int) -> float:
-    """
-    Calculate content quality score to prioritize substantive content.
-    
-    :param content: chunk content
-    :param chunk_id: position of chunk in document
-    :param total_chunks: total chunks in document
-    :return: content quality score (0-1)
-    """
-    score = 0.0
-    
-    # Position scoring: early chunks are more valuable
-    position_ratio = chunk_id / max(total_chunks, 1)
-    if position_ratio < 0.3:  # First 30% of document
-        score += 0.4
-    elif position_ratio < 0.6:  # Middle 30%
-        score += 0.2
-    else:  # Last 40% (likely references)
-        score -= 0.2
-    
-    # Content quality indicators
-    content_lower = content.lower()
-    
-    # Positive indicators (substantive content)
-    positive_terms = [
-        'algorithm', 'method', 'approach', 'result', 'experiment', 'analysis',
-        'propose', 'introduce', 'demonstrate', 'prove', 'show', 'find',
-        'conclusion', 'contribution', 'novel', 'technique', 'performance',
-        'implementation', 'solution', 'framework', 'model', 'theory'
-    ]
-    
-    # Negative indicators (references/metadata)
-    negative_terms = [
-        'et al', 'bibliography', 'references', 'doi:', 'arxiv:', 'isbn',
-        'proceedings', 'conference', 'journal', 'volume', 'pages',
-        'publisher', 'citation', 'cited', 'reference'
-    ]
-    
-    # Score based on content indicators
-    positive_count = sum(1 for term in positive_terms if term in content_lower)
-    negative_count = sum(1 for term in negative_terms if term in content_lower)
-    
-    score += min(positive_count * 0.05, 0.3)  # Max +0.3
-    score -= min(negative_count * 0.1, 0.4)   # Max -0.4
-    
-    # Length bonus for substantial content
-    if len(content) > 500:
-        score += 0.1
-    elif len(content) < 100:
-        score -= 0.1
-    
-    return max(0.0, min(1.0, score))  # Clamp to 0-1
-
 
 def _get_early_chunks(doc_id: str, max_chunks: int = 5) -> List[str]:
     """
@@ -377,7 +271,11 @@ def _find_arxiv_alternative(title: str, snippet: str, original_url: str) -> Opti
             arxiv_id = arxiv_id_match.group(1)
             return f"https://arxiv.org/pdf/{arxiv_id}.pdf"
         
-        # Search arXiv directly using title
+        # Only use title-based search if we have a meaningful title
+        if not title or len(title.strip()) < 10:
+            return None
+            
+        # Search arXiv by title
         clean_title = re.sub(r'[^\w\s]', ' ', title).strip()
         search_terms = ' '.join(clean_title.split()[:8])  # Use first 8 words
         
@@ -391,7 +289,7 @@ def _find_arxiv_alternative(title: str, snippet: str, original_url: str) -> Opti
             
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Look for search results
+        # Look for search results with title similarity check
         for result in soup.find_all('li', class_='arxiv-result'):
             result_title_elem = result.find('p', class_='title')
             if not result_title_elem:
@@ -399,7 +297,7 @@ def _find_arxiv_alternative(title: str, snippet: str, original_url: str) -> Opti
                 
             result_title = result_title_elem.get_text(strip=True)
             
-            # Check if titles are similar (basic similarity check)
+            # Check if titles are similar
             if _titles_similar(title, result_title):
                 # Extract arXiv ID from the result
                 link_elem = result.find('a', href=True)
@@ -447,14 +345,58 @@ def _titles_similar(title1: str, title2: str) -> bool:
 @toolset.add()
 def web_research(query: str, num_results: int = 5) -> str:
     """
-    Search and load web documents related to a query, returning a comprehensive summary.
+    Search and load web documents related to a query, or load a direct URL.
     Automatically finds arXiv PDF alternatives for papers behind authentication walls.
     
-    :param query: search query
+    :param query: search query or direct URL (e.g., https://arxiv.org/abs/2107.10764)
     :param num_results: maximum number of results to load (default: 5)
     :return: formatted results with summaries and metadata
     """
     try:
+        # Check if query is a direct URL
+        if query.startswith(('http://', 'https://')):
+            # For known problematic domains, provide helpful guidance
+            problematic_domains = ['journals.aps.org', 'ieeexplore.ieee.org', 'link.springer.com']
+            if any(domain in query.lower() for domain in problematic_domains):
+                domain_name = next(d for d in problematic_domains if d in query.lower())
+                return f"**Journal Access Issue:**\n\n❌ **{domain_name}** blocks automated access (403 Forbidden)\n\n**💡 Solution:** Use the arXiv URL instead:\n- For PRR papers: Check arXiv.org for the same paper\n- For IEEE papers: Look for arXiv preprint version\n- Example: https://arxiv.org/abs/2107.10764\n\n**Note:** Most physics papers have arXiv versions that are freely accessible."
+            
+            # Handle direct URL loading
+            load_result = _agent.load_url(query)
+            
+            if load_result.get("success"):
+                doc_id = load_result["doc_id"]
+                title = load_result.get("title", query)
+                
+                # Generate summary
+                summary_result = _agent.summarize(doc_id, max_length=200)
+                summary = summary_result.get("summary", "Document loaded successfully") if not summary_result.get("error") else "Document loaded successfully"
+                
+                return f"**Direct URL Load Result:**\n\n**✅ Successfully loaded:**\n1. **{title}**\nURL: {query}\nSummary: {summary}\nID: {doc_id}\n\n**Note:** Document added to your knowledge base and can be queried using `query_documents()`."
+            else:
+                # Try arXiv fallback if it's not already an arXiv URL
+                if 'arxiv.org' not in query.lower():
+                    # Extract potential paper info for arXiv search
+                    try:
+                        response = requests.get(query, timeout=10)
+                        soup = BeautifulSoup(response.text, 'html.parser')
+                        title = soup.title.string if soup.title else ""
+                        
+                        arxiv_url = _find_arxiv_alternative(title, "", query)
+                        if arxiv_url:
+                            load_result = _agent.load_url(arxiv_url, title=title)
+                            if load_result.get("success"):
+                                doc_id = load_result["doc_id"]
+                                summary_result = _agent.summarize(doc_id, max_length=200)
+                                summary = summary_result.get("summary", "Document loaded successfully") if not summary_result.get("error") else "Document loaded successfully"
+                                
+                                return f"**Direct URL Load Result (arXiv fallback):**\n\n**✅ Successfully loaded:**\n1. **{title}**\n✅ arXiv: {arxiv_url}\n(Original: {query})\nSummary: {summary}\nID: {doc_id}\n\n**Note:** Document added to your knowledge base and can be queried using `query_documents()`."
+                    except:
+                        pass
+                
+                return f"**Direct URL Load Failed:**\n\n**❌ Failed to load:** {query}\nError: {load_result.get('error', 'Unknown error')}\n\nTry using `summarize_source()` instead for direct document loading."
+        
+        # Original Google Scholar search logic for text queries
         import requests
         from bs4 import BeautifulSoup
         from urllib.parse import quote
@@ -675,6 +617,7 @@ def create_embeddings(doc_id: str = "all") -> str:
                                 
                                 vector_store = FAISS.from_documents(documents, embeddings)
                                 _agent.vector_stores[doc_id] = vector_store
+                                _agent._save_vector_store(doc_id)
                                 success_count += 1
                             else:
                                 error_count += 1
@@ -716,6 +659,7 @@ def create_embeddings(doc_id: str = "all") -> str:
             
             vector_store = FAISS.from_documents(documents, embeddings)
             _agent.vector_stores[doc_id] = vector_store
+            _agent._save_vector_store(doc_id)
             
             return f"Created embeddings for document {doc_id}"
         
